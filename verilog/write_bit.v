@@ -14,7 +14,6 @@ module I2C_write_bit (
 reg [2:0] counter;
 always @(posedge clock ) begin
     if((go == 1'b1) && (finish == 1'b0)) begin
-
         if(counter == 3'b111)
             counter <= 3'b000;
         else
@@ -30,8 +29,8 @@ parameter START_BIT = 3'b010;
 parameter STOP_BIT = 3'b011;
 parameter DATA_0 = 3'b100;
 parameter DATA_1 = 3'b101;
-parameter ACK = 3'b110;
-parameter NACK = 3'b111;
+parameter ACK_BIT = 3'b110;
+parameter NACK_BIT = 3'b111;
 
 // state varibele
 reg [2:0] state_next;
@@ -57,14 +56,14 @@ always @(*) begin
                         STOP_BIT: state_next = STOP_BIT;
                         DATA_0: state_next = DATA_0;
                         DATA_1: state_next = DATA_1;
-                        ACK: state_next = ACK;
-                        NACK: state_next = NACK;
+                        ACK_BIT: state_next = ACK_BIT;
+                        NACK_BIT: state_next = NACK_BIT;
                         default: state_next = IDLE;
                     endcase
                 else
                     state_next = IDLE;
             end
-        START_BIT, STOP_BIT, DATA_0, DATA_1, ACK, NACK:
+        START_BIT, STOP_BIT, DATA_0, DATA_1, ACK_BIT, NACK_BIT:
             begin
                 if(counter == 3'b100)
                     state_next = IDLE;
@@ -75,6 +74,7 @@ always @(*) begin
     endcase
 end
 
+// output
 always @(*) begin
     if(!reset_n) begin
         scl = 1'b1;
@@ -135,7 +135,7 @@ always @(*) begin
                         finish = 1'b1;
                     end
                 endcase
-            ACK:
+            ACK_BIT:
                 case(counter)
                     3'b001:
                         scl = 1'b0; 
@@ -148,7 +148,7 @@ always @(*) begin
                         finish = 1'b1;
                     end
                 endcase
-            NACK:
+            NACK_BIT:
                 case(counter)
                     3'b001:
                         scl = 1'b0; 

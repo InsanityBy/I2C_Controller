@@ -19,14 +19,14 @@ wire      scl_o;
 assign scl = scl_o;
 assign load = read_bit_finish;
 
-I2C_master_read_bit(
+I2C_master_read_bit read_bit(
     .clock(clock),
     .reset_n(reset_n),
     .go(read_bit_go),
     .finish(read_bit_finish),
     .data(data),
-    .sda(sda)
-    .scl(scl_o),
+    .sda(sda),
+    .scl(scl_o)
 );
 
 // 4-bit counter: when leave IDLE start counting
@@ -87,14 +87,13 @@ end
 // output
 always @(*) begin
     if(!reset_n) begin
-        data = 1'b0;
-	    scl = 1'b1;
         finish = 1'b0;
     end
     else begin
         case(state_current)
             IDLE:
                 begin
+                    read_bit_go = 1'b0;
                     finish = 1'b0;
                 end
             READ_BYTE:
@@ -102,7 +101,8 @@ always @(*) begin
                     if(read_bit_finish && (counter == 4'b0111))
                         finish = 1'b1;
                     else begin
-                        data = data_get;
+                        read_bit_go = 1'b1;
+                        finish = 1'b0;
                     end
                 end
         endcase

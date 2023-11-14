@@ -62,7 +62,7 @@ reg [7:0] shifter;
 always @(posedge clk) begin
     if(!rst_n)
         shifter <= 8'b0000_0000; 
-    else if(load)
+    else if(load_test)
         shifter <= {shifter[6:0], data_test}; 
     else
         shifter <= shifter;
@@ -74,7 +74,7 @@ initial begin
 
     // read
     go_test = 1;
-    while(!finish_test) begin
+    while((!finish_test)) begin
         #5 $display("%b", data_test);
     end
     $display("get: %b",data_test);

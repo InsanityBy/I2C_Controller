@@ -40,7 +40,7 @@ always @(posedge clock or negedge reset_n) begin
         state_current <= state_next;
 end
 
-/ state switch, combination
+// state switch, combination
 always @(*) begin
     case(state_current)
         IDLE:
@@ -52,7 +52,7 @@ always @(*) begin
             end
         READ_BIT:
             begin
-                if(counter == 4'b100)
+                if(counter == 4'b0110)
                     state_next = IDLE;
                 else
                     state_next = state_current;
@@ -65,7 +65,7 @@ end
 always @(*) begin
     if(!reset_n) begin
         data = 1'b0;
-        data_state = 2'b00;
+	  scl = 1'b1;
         finish = 1'b0;
     end
     else begin
@@ -76,20 +76,20 @@ always @(*) begin
                 end
             READ_BIT:
                 case(counter)
-                    4'b0000, 4'b0001: begin
+                    4'b0000, 4'b0001, 4'b0010, 4'b0011: begin
                         scl = 1'b0;
                         finish = 1'b0;
                     end
-                    4'b0010: begin
+                    4'b0100: begin
                         scl = 1'b1;
                         finish = 1'b0;
                     end
-                    4'b0011: begin
+                    4'b0101: begin
                         scl = 1'b1;
                         data = sda;
                         finish = 1'b0;
                     end
-                    4'b0100: begin
+                    4'b0110: begin
                         scl = 1'b1;
                         finish = 1'b1;
                     end

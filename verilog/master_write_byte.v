@@ -1,4 +1,4 @@
-module I2C_write_byte (
+module I2C_master_write_byte (
     // signal to control module
     input [2:0] command,
     input       clock,
@@ -26,12 +26,10 @@ reg       write_bit_go;
 wire      write_bit_finish;
 wire      scl_o, sda_o;
 
-//assign scl = (write_bit_go)?scl_o:1'bz;
-//assign sda = (write_bit_go)?sda_o:1'bz;
 assign scl = scl_o;
 assign sda = sda_o;
 
-I2C_write_bit write_bit(
+I2C_master_write_bit write_bit(
     .command(write_command),
     .clock(clock),
     .reset_n(reset_n),

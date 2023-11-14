@@ -1,4 +1,4 @@
-module I2C_write_bit (
+module I2C_master_write_bit (
     // signal to control module
     input [2:0] command,
     input       clock,

@@ -21,6 +21,13 @@ module I2C_master_write_bit (input clock,
             counter <= 3'b000;
     end
     
+    always @(*) begin
+        if (counter == 3'b111)
+            finish = 1'b1;
+        else
+            finish = 1'b0;
+    end
+    
     // command for different write operation
     parameter IDLE      = 3'b000;
     parameter START_BIT = 3'b010;
@@ -32,7 +39,7 @@ module I2C_master_write_bit (input clock,
     
     
     // output, sequential circuit to handle race and hazard
-    // according to protocol divide each kind bit into 8 parts
+    // according to protocol, each kind bit is divided into 8 parts
     // +-----------+-----+---+---+---+---+---+---+---+---+
     // | START_BIT | scl | 1   1   1   1 | 1   1   1   1 |
     // |           | sda | 1   1   1   1 | 1   1   0   0 |
@@ -55,12 +62,12 @@ module I2C_master_write_bit (input clock,
     always @(posedge clock or negedge reset_n) begin
         if (!reset_n) begin
             {scl, sda} <= 2'b11;
-            finish     <= 1'b0;
+            // finish  <= 1'b0;
         end
         else begin
             case(counter)
                 3'b000: begin
-                    finish <= 1'b0;
+                    // finish <= 1'b0;
                     case(command)
                         START_BIT: begin
                             {scl, sda} <= 2'b11;
@@ -75,7 +82,7 @@ module I2C_master_write_bit (input clock,
                     endcase
                 end
                 3'b001, 3'b010, 3'b011: begin
-                    finish <= 1'b0;
+                    // finish <= 1'b0;
                     case(command)
                         START_BIT: begin
                             {scl, sda} <= 2'b11;
@@ -92,7 +99,7 @@ module I2C_master_write_bit (input clock,
                     endcase
                 end
                 3'b100, 3'b101: begin
-                    finish = 1'b0;
+                    // finish = 1'b0;
                     case(command)
                         START_BIT, DATA_1, NACK_BIT: begin
                             {scl, sda} <= 2'b11;
@@ -106,7 +113,7 @@ module I2C_master_write_bit (input clock,
                     endcase
                 end
                 3'b110: begin
-                    finish <= 1'b0;
+                    // finish <= 1'b0;
                     case(command)
                         START_BIT, DATA_0, ACK_BIT: begin
                             {scl, sda} <= 2'b10;
@@ -120,7 +127,7 @@ module I2C_master_write_bit (input clock,
                     endcase
                 end
                 3'b111: begin
-                    finish <= 1'b1;
+                    // finish <= 1'b1;
                     case(command)
                         START_BIT, DATA_0, ACK_BIT: begin
                             {scl, sda} <= 2'b10;

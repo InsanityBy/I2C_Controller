@@ -120,7 +120,6 @@ module I2C_master_write_byte (input clock,
     end
     
     // output, sequential circuit to handle race and hazard
-    
     always @(posedge clock or negedge reset_n) begin
         if (!reset_n) begin
             write_bit_go  <= 1'b0;

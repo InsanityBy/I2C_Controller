@@ -1,35 +1,52 @@
 module I2C_master_read_byte (input clock,
                              input reset_n,
                              input go,
-                             output reg finish,
                              output data,
                              output reg load,
+                             output reg finish,
+                             output reg error,
                              input sda,
                              output reg scl);
     
-    // module to read 1-bit
+    // instantiate submodule to read 1-bit
+    // reg and wire connect to submodule
     reg       read_bit_go;
-    wire      read_bit_finish;
-    wire      scl_o;
+    wire      read_bit_finish, read_bit_error;
+    wire      scl_w;
     
-    assign scl  = scl_o;
-    assign load = read_bit_finish;
+    // connect outputs of the submodule to this module's
+    always @(*) begin
+        scl  = scl_w;
+        load = read_bit_finish; // drive shifter to load each bit data
+    end
+    
+    // synchronize signal to eliminate glitches
+    reg read_bit_finish_sync;
+    always @(posedge clock) begin
+        read_bit_finish_sync <= read_bit_finish;
+    end
     
     I2C_master_read_bit read_bit(
     .clock(clock),
     .reset_n(reset_n),
     .go(read_bit_go),
-    .finish(read_bit_finish),
     .data(data),
+    .finish(read_bit_finish),
+    .error(read_bit_error),
     .sda(sda),
-    .scl(scl_o)
+    .scl(scl_w)
     );
     
-    // 4-bit counter: when leave IDLE start counting
+    // 4-bit counter: drive submodule to read 8 times when reading 1 byte data
+    // only increase 1 after reading 1 bit
     reg [3:0] counter;
-    always @(posedge clock) begin
-        if ((go == 1'b1) && (finish == 1'b0)) begin
-            if (read_bit_finish) begin
+    always @(posedge clock or negedge reset_n) begin
+        if (!reset_n)
+            counter <= 4'b0000;
+        else if (read_bit_error)
+            counter <= 4'b0000;
+        else if ((go == 1'b1) && (finish == 1'b0)) begin
+            if (read_bit_finish_sync) begin
                 if (counter == 4'b1111)
                     counter <= 4'b0000;
                 else
@@ -42,64 +59,24 @@ module I2C_master_read_byte (input clock,
             counter <= 4'b0000;
     end
     
-    // state
-    parameter IDLE      = 1'b0;
-    parameter READ_BYTE = 1'b1;
-    
-    // state varibele
-    reg       state_next;
-    reg       state_current;
-    
-    // state transfer, sequential
+    // output, sequential circuit to handle race and hazard
     always @(posedge clock or negedge reset_n) begin
-        // reset, transfer to IDLE state
-        if (!reset_n)
-            state_current <= IDLE;
-        else
-            state_current <= state_next;
-    end
-    
-    // state switch, combination
-    always @(*) begin
-        case(state_current)
-            IDLE:
-            begin
-                if ((go == 1'b1) && (finish == 1'b0))
-                    state_next = READ_BYTE;
-                else
-                    state_next = IDLE;
-            end
-            READ_BYTE:
-            begin
-                if (read_bit_finish && (counter == 4'b0111))
-                    state_next = IDLE;
-                else
-                    state_next = state_current;
-            end
-            default: state_next = IDLE;
-        endcase
-    end
-    
-    // output
-    always @(*) begin
         if (!reset_n) begin
-            finish = 1'b0;
+            finish <= 1'b0;
         end
         else begin
-            case(state_current)
-                IDLE:
-                begin
-                    read_bit_go = 1'b0;
-                    finish      = 1'b0;
+            case(counter)
+                4'b0000: begin
+                    read_bit_go <= 1'b1;
+                    finish      <= 1'b0;
                 end
-                READ_BYTE:
-                begin
-                    if (read_bit_finish && (counter == 4'b0111))
-                        finish = 1'b1;
-                    else begin
-                        read_bit_go = 1'b1;
-                        finish      = 1'b0;
-                    end
+                4'b0001, 4'b0010, 4'b0011, 4'b0100, 4'b0101, 4'b0110, 4'b0111: begin
+                    read_bit_go <= 1'b1;
+                    finish      <= 1'b0;
+                end
+                4'b1000: begin
+                    read_bit_go <= 1'b1;
+                    finish      <= 1'b1;
                 end
             endcase
         end

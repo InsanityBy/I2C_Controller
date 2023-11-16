@@ -35,7 +35,6 @@ module testbench();
         #1000000
         $dumpoff;
         `endif
-        $monitor($realtime, "finish = ", finish_test);
     end
     
     // initialize inputs and create clock

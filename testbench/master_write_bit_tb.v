@@ -16,7 +16,7 @@ module testbench();
     
     // test value for command, test all commands
     parameter command_test_value = {IDLE, START_BIT, STOP_BIT, DATA_0, DATA_1, ACK_BIT, NACK_BIT};
-    // test numver
+    // test number
     parameter test_number = 7;
     reg [3:0] current_test_number;
     
@@ -69,7 +69,7 @@ module testbench();
             current_test_number <= 4'b0000;
         end
         else if (finish_test) begin
-            go_test      <= 1'b0;
+            go_test      <= 1'b1;
             command_test <= command_send[20:18];
             command_send <= {command_send[17:0], command_send[20:18]};
             $display("--%02d-- command: %3b", current_test_number, command_test);
@@ -85,6 +85,7 @@ module testbench();
     // prompt and log
     initial begin
         $display("******** 'master_write_bit' module test started ********");
+        // wait till finished
         wait(current_test_number == test_number);
         #10
         $display("-------------------------------------------------");

@@ -1,31 +1,26 @@
 module I2C_master_read_byte (input clock,
                              input reset_n,
-                             input go,
-                             output data,
-                             output reg load,
-                             output reg finish,
-                             output reg error,
-                             input sda,
-                             output reg scl);
+                             input go,          // enable signal for module
+                             output data,       // data read from I2C bus
+                             output reg load,   // drive shifter to save data bit by bit
+                             output reg finish, // indicates completion of writing
+                             output reg error,  // indicates an error during reading
+                             output reg scl,
+                             input sda);
     
     // instantiate submodule to read 1-bit
     // reg and wire connect to submodule
-    reg       read_bit_go;
-    wire      read_bit_finish, read_bit_error;
-    wire      scl_w;
+    reg read_bit_go;
+    wire read_bit_finish, read_bit_error;
+    wire scl_w;
     
     // connect outputs of the submodule to this module's
     always @(*) begin
-        scl  = scl_w;
-        load = read_bit_finish; // drive shifter to load each bit data
+        scl   = scl_w;
+        error = read_bit_error;
     end
     
-    // synchronize signal to eliminate glitches
-    reg read_bit_finish_sync;
-    always @(posedge clock) begin
-        read_bit_finish_sync <= read_bit_finish;
-    end
-    
+    // instantiate submodule
     I2C_master_read_bit read_bit(
     .clock(clock),
     .reset_n(reset_n),
@@ -33,52 +28,63 @@ module I2C_master_read_byte (input clock,
     .data(data),
     .finish(read_bit_finish),
     .error(read_bit_error),
-    .sda(sda),
-    .scl(scl_w)
+    .scl(scl_w),
+    .sda(sda)
     );
     
-    // 4-bit counter: drive submodule to read 8 times when reading 1 byte data
-    // only increase 1 after reading 1 bit
-    reg [3:0] counter;
+    // 3-bit counter for driving the FSM, only increase 1 after reading 1 bit
+    reg [2:0] counter;  // current counter value
+    wire counter_en;    // enable signal for counter
+    wire counter_hold;  // hold counter value
+    // generate enable and hold signal for counter
+    assign counter_en   = go && (~finish) && (~read_bit_error);
+    assign counter_hold = ~read_bit_finish;
+    // counter
     always @(posedge clock or negedge reset_n) begin
-        if (!reset_n)
-            counter <= 4'b0000;
-        else if (read_bit_error)
-            counter <= 4'b0000;
-        else if ((go == 1'b1) && (finish == 1'b0)) begin
-            if (read_bit_finish_sync) begin
-                if (counter == 4'b1111)
-                    counter <= 4'b0000;
+        if (!reset_n) begin
+            counter <= 3'b000;
+        end
+        else if (counter_en) begin
+            if (counter_hold) begin
+                counter <= counter;
+            end
+            else begin
+                if (counter == 3'b111)
+                    counter <= 3'b000;
                 else
                     counter <= counter + 1'b1;
             end
-            else
-                counter <= counter;
-        end
-        else
-            counter <= 4'b0000;
-    end
-    
-    // output, sequential circuit to handle race and hazard
-    always @(posedge clock or negedge reset_n) begin
-        if (!reset_n) begin
-            finish <= 1'b0;
         end
         else begin
-            case(counter)
-                4'b0000: begin
-                    read_bit_go <= 1'b1;
-                    finish      <= 1'b0;
-                end
-                4'b0001, 4'b0010, 4'b0011, 4'b0100, 4'b0101, 4'b0110, 4'b0111: begin
-                    read_bit_go <= 1'b1;
-                    finish      <= 1'b0;
-                end
-                4'b1000: begin
-                    read_bit_go <= 1'b1;
-                    finish      <= 1'b1;
-                end
-            endcase
+            counter <= 3'b000;
         end
     end
+    
+    // output
+    // generate load signal to drive data shifter after reading each bit
+    always @(*) begin
+        load = read_bit_finish; // drive shifter to load each bit data
+    end
+    
+    // output, combinational circuit
+    always @(*) begin
+        if (!reset_n) begin
+            read_bit_go = 1'b0;
+            finish      = 1'b0;
+        end
+        else if (go) begin
+            read_bit_go = 1'b1;
+            if (read_bit_finish && (counter == 3'b111)) begin
+                finish = 1'b1;
+            end
+            else begin
+                finish = 1'b0;
+            end
+        end
+        else begin
+            read_bit_go = 1'b0;
+            finish      = 1'b0;
+        end
+    end
+    
 endmodule

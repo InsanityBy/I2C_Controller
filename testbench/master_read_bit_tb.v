@@ -41,17 +41,17 @@ end
 reg [1:0] scl_state;
 reg detect;
 
-assign detect = sda_state[1] && (~sda_state[0]);
+assign detect = scl_state[1] && (~scl_state[0]);
 
 always @(posedge clk or negedge rst_n) begin
-    if(!reset_n)
+    if(!rst_n)
         scl_state <= 2'b00; 
     else
-        scl_state <= {scl_state[0], scl}; 
+        scl_state <= {scl_state[0], scl_test}; 
 end
 
 always @(posedge clk or negedge rst_n) begin
-    if(!reset_n)
+    if(!rst_n)
         sda_test <= 1'b1;
     else if(detect)
         sda_test <= ~sda_test; 
@@ -64,19 +64,22 @@ initial begin
 
     // read 1st
     go_test = 1;
-    command_test = 3'b010;
-    wait(finish_test);
-    $display("%b",data_test);
+    while(!finish_test) begin
+        #5 $display("%b", data_test);
+    end
+    $display("get: %b",data_test);
     go_test = 0;
 
     // read 2nd
+    wait(!finish_test);
     go_test = 1;
-    command_test = 3'b010;
-    wait(finish_test);
-    $display("%b",data_test);
+    while(!finish_test) begin
+        #5 $display("%b", data_test);
+    end
+    $display("get: %b",data_test);
     go_test = 0;
 
-    $finish;
+    #100 $finish;
 end
 
 endmodule

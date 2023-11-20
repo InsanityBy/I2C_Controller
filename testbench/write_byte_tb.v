@@ -1,10 +1,10 @@
 `timescale 1ns/10ps
 
 module testbench();
-reg clk, rst_n, go_test, load;
+reg clk, rst_n, go_test;
 reg [7:0] data_test;
 reg [2:0] command_test;
-wire finish_test, scl_test, sda_test;
+wire finish_test, scl_test, sda_test, load_test;
 
 // instantiate the detector
 I2C_write_byte test_module(
@@ -12,7 +12,8 @@ I2C_write_byte test_module(
     .reset_n(rst_n),
     .go(go_test),
     .command(command_test),
-    .data(data_test)
+    .data(data_test[7]),
+    .load(load_test),
     .finish(finish_test),
     .scl(scl_test),
     .sda(sda_test)
@@ -24,7 +25,7 @@ initial begin
   $display("\n*** fsdb file dump is turned on ***\n");
   $fsdbDumpfile("wave.fsdb");
   $fsdbDumpvars(0);
-  #100000
+  #1000000
   $fsdbDumpoff;
 `endif
 end
@@ -42,7 +43,7 @@ end
 
 // shifter to write data
 always @(posedge clk ) begin
-    if(!load)
+    if(!load_test)
         data_test <= {data_test[6:0], 1'b0};
     else
         data_test <= data_test;
@@ -51,6 +52,7 @@ end
 initial begin
     #10 rst_n = 0;
     #10 rst_n = 1;
+    #10 i = 0;
 
     // start bit
     go_test = 1;
@@ -58,18 +60,17 @@ initial begin
     wait(finish_test);
     go_test = 0;
 
-    // data
-    go_test = 1;
-    load = 0;
-    command_test = 3'b011;
-    wait(finish_test);
-    load = 1;
-    go_test = 0;
-
     // ACK
     wait(!finish_test);
     go_test = 1;
     command_test = 3'b111;
+    wait(finish_test);
+    go_test = 0;
+
+    // data
+    wait(!finish_test);
+    go_test = 1;
+    command_test = 3'b011;
     wait(finish_test);
     go_test = 0;
 

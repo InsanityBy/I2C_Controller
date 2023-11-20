@@ -6,6 +6,7 @@ module I2C_write_byte (
     input       go,
     input       data,
     output reg  finish,
+    output reg  load,
     // signal to control I2C
     output reg  scl,
                 sda
@@ -25,33 +26,20 @@ reg       write_bit_go;
 wire      write_bit_finish;
 wire      scl_o, sda_o;
 
-assign scl = (write_bit_go)?scl_o:1'bz;
-assign sda = (write_bit_go)?sda_o:1'bz;
+//assign scl = (write_bit_go)?scl_o:1'bz;
+//assign sda = (write_bit_go)?sda_o:1'bz;
+assign scl = scl_o;
+assign sda = sda_o;
 
 I2C_write_bit write_bit(
-    .command(write_command).
+    .command(write_command),
     .clock(clock),
     .reset_n(reset_n),
     .go(write_bit_go),
     .finish(write_bit_finish),
     .scl(scl_o),
     .sda(sda_o)
-)
-
-// 4-bit counter: when leave IDLE start counting
-reg [3:0] counter;
-always @(posedge clock ) begin
-    if((go == 1'b1) && (finish == 1'b0)) begin
-        if((command == DATA) && write_bit_finish) begin
-            if(counter == 4'b1111)
-                counter <= 4'b0000;
-            else
-                counter <= counter + 1'b1;
-        end
-    end
-    else
-        counter <= 4'b0000;
-end
+);
 
 // state and command
 parameter IDLE = 3'b000;
@@ -60,6 +48,26 @@ parameter DATA = 3'b011;
 parameter ACK = 3'b111;
 parameter NACK = 3'b101;
 parameter STOP = 3'b100;
+
+// 4-bit counter: when leave IDLE start counting
+reg [3:0] counter;
+always @(posedge clock ) begin
+    if((go == 1'b1) && (finish == 1'b0) && (command == DATA)) begin
+        if(write_bit_finish) begin
+	      if(counter == 4'b1111)
+	          counter <= 4'b0000;
+	      else
+	          counter <= counter + 1'b1;
+        end
+        else
+            counter <= counter;
+    end
+    else
+        counter <= 4'b0000;
+end
+
+// load data
+assign load = ~(write_bit_finish && (command == DATA));
 
 // state varibele
 reg [2:0] state_next;
@@ -98,7 +106,7 @@ always @(*) begin
             end
         DATA:
             begin
-                if(write_bit_finish && (counter == 4'b1000))
+                if(write_bit_finish && (counter == 4'b0111))
                     state_next = IDLE;
                 else
                     state_next = DATA;
@@ -109,8 +117,8 @@ end
 
 always @(*) begin
     if(!reset_n) begin
-        scl = 1'b1;
-        sda = 1'b1;
+        //scl = 1'b1;
+        //sda = 1'b1;
         finish = 1'b0;
     end
     else begin
@@ -159,14 +167,14 @@ always @(*) begin
                 end
             DATA:
                 begin
-                    if(write_bit_finish && (counter == 4'b1000))
+                    if(write_bit_finish && (counter == 4'b0111))
                         finish = 1'b1;
                     else begin
                         if(data)
                             write_command = DATA_1;
                         else
                             write_command = DATA_0;
-                        write_bit_go = 1'b1'
+                        write_bit_go = 1'b1;
                         finish = 1'b0;
                     end
                 end

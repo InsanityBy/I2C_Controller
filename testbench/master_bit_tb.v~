@@ -85,7 +85,7 @@ initial begin
     command_test = 3'b111;
     wait(finish_test);
     go_test = 0;
-
+    
     $finish;
 end
 

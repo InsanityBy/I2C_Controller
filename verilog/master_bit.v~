@@ -10,18 +10,18 @@ module I2C_master_bit (
                 sda
 );
 
-// 3-bit counter: when leave IDLE start counting
-reg [2:0] counter;
+// 2-bit counter: when leave IDLE start counting
+reg [1:0] counter;
 always @(posedge clock ) begin
     if((go == 1'b1) && (finish == 1'b0)) begin
 
-        if(counter == 3'b111)
-            counter <= 3'b000;
+        if(counter == 2'b11)
+            counter <= 2'b00;
         else
             counter <= counter + 1'b1;
     end
     else
-        counter <= 3'b000;
+        counter <= 2'b00;
 end
 
 // state and command
@@ -66,7 +66,7 @@ always @(*) begin
             end
         START_BIT, STOP_BIT, DATA_0, DATA_1, ACK, NACK:
             begin
-                if(counter == 3'b100)
+                if(counter == 2'b11)
                     state_next = IDLE;
                 else
                     state_next = state_current;
@@ -89,74 +89,74 @@ always @(*) begin
                 end
             START_BIT:
                 case(counter)
-                    3'b001, 3'b010, 3'b011:
+                    2'b00, 2'b01, 2'b10:
                         {scl, sda} = 2'b11;
-                    3'b100: begin
+                    2'b11: begin
                         {scl, sda} = 2'b10;
                         finish = 1'b1;
                     end
                 endcase
             STOP_BIT:
                 case(counter)
-                    3'b001:
+                    2'b00:
                         scl = 1'b0; 
-                    3'b010:
+                    2'b01:
                         {scl, sda} = 2'b00;
-                    3'b011:
+                    2'b10:
                         {scl, sda} = 2'b10;
-                    3'b100: begin
+                    2'b11: begin
                         {scl, sda} = 2'b11;
                         finish = 1'b1;
                     end
                 endcase
             DATA_0:
                 case(counter)
-                    3'b001:
+                    2'b00:
                         scl = 1'b0; 
-                    3'b010:
+                    2'b01:
                         {scl, sda} = 2'b00;
-                    3'b011:
+                    2'b10:
                         {scl, sda} = 2'b10;
-                    3'b100: begin
+                    2'b11: begin
                         {scl, sda} = 2'b10;
                         finish = 1'b1;
                     end
                 endcase
             DATA_1:
                 case(counter)
-                    3'b001:
+                    2'b00:
                         scl = 1'b0; 
-                    3'b010:
+                    2'b01:
                         {scl, sda} = 2'b01;
-                    3'b011:
+                    2'b10:
                         {scl, sda} = 2'b11;
-                    3'b100: begin
+                    2'b11: begin
                         {scl, sda} = 2'b11;
                         finish = 1'b1;
                     end
                 endcase
             ACK:
                 case(counter)
-                    3'b001:
+                    2'b00:
                         scl = 1'b0; 
-                    3'b010:
+                    2'b01:
                         {scl, sda} = 2'b00;
-                    3'b011:
+                    2'b10:
                         {scl, sda} = 2'b10;
-                    3'b100: begin
+                    2'b11: begin
                         {scl, sda} = 2'b10;
                         finish = 1'b1;
                     end
                 endcase
             NACK:
                 case(counter)
-                    3'b001:
+                    2'b00:
                         scl = 1'b0; 
-                    3'b010:
+                    2'b01:
                         {scl, sda} = 2'b01;
-                    3'b011:
+                    2'b10:
                         {scl, sda} = 2'b11;
-                    3'b100: begin
+                    2'b11: begin
                         {scl, sda} = 2'b11;
                         finish = 1'b1;
                     end

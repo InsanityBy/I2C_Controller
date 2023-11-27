@@ -1,44 +1,58 @@
 module I2C_slave_write_bit (
            input clock,
            input reset_n,
-           input go,            // enable signal for module
-           input data,          // data write to I2C bus
-           output reg finish,   // indicates completion of writing
+           input enable,    // enable signal, expected to be a pulse at scl falling edge
+           input data,      // data write to I2C bus
+           output finish,   // finish signal
            input scl,
            output reg sda);
 
 // detect scl falling edge
-reg [1: 0] scl_state;
+reg scl_last_state;
+wire scl_falling_edge;
+// save scl last state
 always @(posedge clock or negedge reset_n) begin
     if (!reset_n) begin
-        scl_state <= 2'b00;
+        scl_last_state <= 1'b1;
     end
     else begin
-        scl_state <= {scl_state[0], scl};
+        scl_last_state <= scl;
     end
 end
-reg scl_falling; // indicates falling edge of scl
-always @(*) begin
-    if(scl_state == 2'b10)
-        scl_falling = 1'b1;
-    else
-        scl_falling = 1'b0;
+// scl falling edge: 1 -> 0
+assign scl_falling_edge = scl_last_state && (~scl);
+
+// generate sda output, write once at enable high and scl low
+always @(posedge clock or negedge reset_n) begin
+    if (!reset_n) begin
+        sda <= 1'b1;
+    end
+    else if (enable && (~scl)) begin
+        sda <= data;
+    end
+    else begin
+        sda <= sda;
+    end
 end
 
-// output
-always @(*) begin
+// track whether module has been enabled to prevent unexpected finish flag
+reg enabled;
+always @(posedge clock or negedge reset_n) begin
     if (!reset_n) begin
-        sda = 1'b1;
-        finish = 1'b0;
+        enabled <= 1'b0;
     end
-    if (go && scl_falling &&(~scl)) begin
-        sda = data;
-        finish = 1'b1;
+    else if (enable && (~scl)) begin
+        enabled <= 1'b1;
+    end
+    else if(scl_falling_edge) begin
+        enabled <= 1'b0;
     end
     else begin
-        sda = sda;
-        finish = 1'b0;
+        enabled <= enabled;
     end
 end
+
+// generate finish flag
+assign finish = enabled && scl_falling_edge;
 
 endmodule

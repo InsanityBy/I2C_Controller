@@ -1,22 +1,24 @@
 `timescale 1ns/10ps
 
 module testbench();
-reg clk, rst_n, go_test;
+reg clk, rst_n, enable_test;
 wire data_test, finish_test;
 reg scl_test;
 wire sda_test;
 
-// test data to write
+// test parameters
 parameter test_data_value = 32'h13_57_9b_df;
-// test number
 parameter test_number = 32;
-reg [4:0] current_test_number;
+parameter clk_divider_ratio = 8; // period_of_SCL = clk_divider_ratio * period_of_clk
+reg test_start;
+reg [31:0] current_test_count;
+reg [4:0] error_count;
 
 // instantiate the submodule
 I2C_slave_write_bit test_module(
                         .clock(clk),
                         .reset_n(rst_n),
-                        .go(go_test),
+                        .enable(enable_test),
                         .data(data_test),
                         .finish(finish_test),
                         .scl(scl_test),
@@ -52,86 +54,118 @@ initial begin
         #10 clk = ~clk;
 end
 
-// generate scl_test fot test module
-// save written data
-reg [1:0] counter;
-reg data_written;
+// scl_test
+// counter to generate scl_test
+reg [31:0] counter;
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        go_test <= 1'b0;
-        counter <= 2'b00;
-        scl_test <= 1'b1;
-        data_written <= 1'b0;
+        counter <= 32'b0;
     end
-    else if (!finish_test) begin
-        go_test <= 1'b1;
-        if (counter == 2'b11) begin
-            counter <= 2'b00;
+    else begin
+        if (counter == (clk_divider_ratio - 1)) begin
+            counter <= 32'b0;
         end
         else begin
             counter <= counter + 1;
         end
-        case(counter)
-            2'b00, 2'b01: begin
-                scl_test <= 1'b1;
-                data_written <= data_written;
-            end
-            2'b10: begin
-                scl_test <= 1'b0;
-                data_written <= data_written;
-            end
-            2'b11: begin
-                scl_test <= 1'b0;
-                data_written <= data_test;
-            end
-        endcase
+    end
+end
+// generate scl_test
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        scl_test <= 1'b1;
     end
     else begin
-        go_test <= 1'b0;
-        counter <= 2'b00;
-        scl_test <= scl_test;
-        data_written <= data_written;
+        if (counter < (clk_divider_ratio / 2)) begin
+            scl_test <= 1'b1;
+        end
+        else begin
+            scl_test <= 1'b0;
+        end
+    end
+end
+
+// detect scl rising and falling edge
+reg scl_test_last_state;
+wire scl_test_rising_edge, scl_test_falling_edge;
+// save scl last state
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        scl_test_last_state <= 1'b1;
+    end
+    else begin
+        scl_test_last_state <= scl_test;
+    end
+end
+assign scl_test_rising_edge = (~scl_test_last_state) && scl_test;
+assign scl_test_falling_edge = scl_test_last_state && (~scl_test);
+
+// enable_test
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        enable_test <= 1'b0;
+    end
+    else begin
+        enable_test <= scl_test_falling_edge && test_start;
     end
 end
 
 // load data to test module
-reg [31:0] data_to_write;
-// connect
-assign data_test = data_to_write[31];
+reg [test_number - 1 : 0] data_to_write;
+assign data_test = data_to_write[test_number - 1];
 // load data
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         data_to_write <= test_data_value;
     end
     else if(finish_test) begin
-        data_to_write <= {data_to_write[30:0], data_to_write[31]};
+        data_to_write <= {data_to_write[test_number - 2:0], data_to_write[test_number - 1]};
     end
     else begin
         data_to_write <= data_to_write;
     end
 end
 
-// test information
+// check sda_test
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        current_test_number <= 4'b0000;
+        current_test_count <= 32'b0;
+        error_count <= 1'b0;
     end
-    else if (finish_test) begin
-        current_test_number <= current_test_number + 1;
-        $display("--%02d-- write: %h", current_test_number, data_written);
+    else if(test_start && scl_test_rising_edge && scl_test) begin
+        current_test_count <= current_test_count + 1;
+        if(sda_test != data_to_write[31]) begin
+            error_count <= error_count + 1;
+            $display("--%02d--FAIL-- write/read: %h", current_test_count, data_to_write[31], sda_test);
+        end
+        else begin
+            $display("--%02d--PASS-- write/read: %h", current_test_count, data_to_write[31], sda_test);
+            error_count <= error_count;
+        end
     end
     else begin
-        current_test_number <= current_test_number;
+        current_test_count <= current_test_count;
+        error_count <= error_count;
     end
 end
 
-// prompt and log
+// start test and generate prompt and log
 initial begin
+    test_start = 1'b0;
+    #20 test_start = 1'b1;
     $display("******** 'slave_write_bit' module test started ********");
     // wait till finished
-    wait(current_test_number == test_number - 1);
-    #10
-     $display("******** 'slave_write_bit' module test finished ********");
+    wait(current_test_count == test_number);
+    test_start = 1'b0;
+    #500
+     $display("-------------------------------------------------");
+    if (error_count == 0) begin
+        $display("result: passed with %02d errors in %02d tests", error_count, test_number);
+    end
+    else begin
+        $display("result: failed with %02d errors in %02d tests", error_count, test_number);
+    end
+    $display("******** 'slave_write_bit' module test finished ********");
     $finish;
 end
 

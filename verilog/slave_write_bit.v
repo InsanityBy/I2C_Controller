@@ -7,9 +7,9 @@ module I2C_slave_write_bit (
            input scl,
            output reg sda);
 
-// detect scl falling edge
+// detect scl falling and rising edge
 reg scl_last_state;
-wire scl_falling_edge;
+wire scl_rising_edge, scl_falling_edge;
 // save scl last state
 always @(posedge clock or negedge reset_n) begin
     if (!reset_n) begin
@@ -21,6 +21,8 @@ always @(posedge clock or negedge reset_n) begin
 end
 // scl falling edge: 1 -> 0
 assign scl_falling_edge = scl_last_state && (~scl);
+// scl rising edge: 0 -> 1
+assign scl_rising_edge = (~scl_last_state) && scl;
 
 // generate sda output, write once at enable high and scl low
 always @(posedge clock or negedge reset_n) begin
@@ -44,7 +46,7 @@ always @(posedge clock or negedge reset_n) begin
     else if (enable && (~scl)) begin
         enabled <= 1'b1;
     end
-    else if(scl_falling_edge) begin
+    else if(scl_rising_edge) begin
         enabled <= 1'b0;
     end
     else begin
@@ -53,6 +55,6 @@ always @(posedge clock or negedge reset_n) begin
 end
 
 // generate finish flag
-assign finish = enabled && scl_falling_edge;
+assign finish = enabled && scl_rising_edge;
 
 endmodule

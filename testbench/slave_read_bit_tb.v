@@ -7,7 +7,7 @@ reg scl_test, sda_test;
 
 // test parameters
 parameter test_data_value = 32'h13_57_9b_df;
-parameter test_number = 32;
+parameter test_number = 32;      // no more than length of test_data_value
 parameter clk_divider_ratio = 8; // period_of_SCL = clk_divider_ratio * period_of_clk
 reg test_start;
 reg [31:0] current_test_count;
@@ -138,13 +138,13 @@ always @(posedge clk or negedge rst_n) begin
         current_test_count <= current_test_count + 1;
         if(data_test != test_data_value[test_number - current_test_count - 1]) begin
             error_count <= error_count + 1;
-            $display("--%02d--FAIL-- write/read: %h",
+            $display("--%02d--FAIL-- write/read: %b/%b",
                      current_test_count,
                      test_data_value[test_number - current_test_count - 1],
                      data_test);
         end
         else begin
-            $display("--%02d--PASS-- write/read: %h",
+            $display("--%02d--PASS-- write/read: %b/%b",
                      current_test_count,
                      test_data_value[test_number - current_test_count - 1],
                      data_test);

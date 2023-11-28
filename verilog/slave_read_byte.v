@@ -1,22 +1,20 @@
 module I2C_slave_read_byte (
            input clock,
            input reset_n,
-           input enable,    // enable signal, expected to be a pulse at scl rising edge
-           output data,     // data read from I2C bus
-           output load,     // drive shifter to save data bit by bit
-           output reg error,// error signal
-           output finish,   // finish signal
+           input enable,     // enable signal, expected to be a pulse at scl rising edge
+           output [7:0] data,// data read from I2C bus
+           output reg error, // error signal
+           output reg finish,// finish signal
            input scl,
            input sda);
 
 // instantiate I2C_slave_read_bit
-wire read_bit_enable;
-wire read_bit_finish, read_bit_error;
+wire read_bit_enable, read_bit_data, read_bit_finish, read_bit_error;
 I2C_slave_read_bit read_bit(
                        .clock(clock),
                        .reset_n(reset_n),
                        .enable(read_bit_enable),
-                       .data(data),
+                       .data(read_bit_data),
                        .error(read_bit_error),
                        .finish(read_bit_finish),
                        .scl(scl),
@@ -57,6 +55,20 @@ always @(posedge clock or negedge reset_n) begin
     end
 end
 
+// save data to shift register
+reg [7:0] shift_register;
+always @(posedge clock or negedge reset_n) begin
+    if (!reset_n) begin
+        shift_register <= 8'b0000_0000;
+    end
+    else if (read_bit_finish) begin
+        shift_register <= {shift_register[6:0], read_bit_data};
+    end
+    else begin
+        shift_register <= shift_register;
+    end
+end
+
 // track whether module has been enabled to prevent unexpected read_bit_enable
 reg enabled;
 always @(posedge clock or negedge reset_n) begin
@@ -91,10 +103,20 @@ end
 // first bit is enabled by enable signal, others are enabled by scl rising edge
 assign read_bit_enable = enable || (scl_rising_edge && enabled);
 
-// generate load
-assign load = read_bit_finish;
+// generate data
+assign data = shift_register;
 
 // generate finish
-assign finish = read_bit_finish && (counter == 3'b111);
+always @(posedge clock or negedge reset_n) begin
+    if (!reset_n) begin
+        finish <= 1'b0;
+    end
+    else if(read_bit_finish && (counter == 3'b111)) begin
+        finish <= 1'b1;
+    end
+    else begin
+        finish <= 1'b0;
+    end
+end
 
 endmodule

@@ -2,7 +2,8 @@
 
 module testbench();
 reg clk, rst_n, enable_test;
-wire data_test, load_test, finish_test, error_test;
+wire [7:0]data_test;
+wire finish_test, error_test;
 reg scl_test, sda_test;
 
 // test parameters
@@ -19,7 +20,6 @@ I2C_slave_read_byte test_module(
                         .reset_n(rst_n),
                         .enable(enable_test),
                         .data(data_test),
-                        .load(load_test),
                         .error(error_test),
                         .finish(finish_test),
                         .scl(scl_test),
@@ -167,25 +167,9 @@ always @(posedge clk or negedge rst_n) begin
     end
 end
 
-// save 1-byte data
-reg [7:0] byte_read;
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        byte_read <= 8'h00;
-    end
-    else if(load_test) begin
-        byte_read <= {byte_read[6:0], data_test};
-    end
-    else begin
-        byte_read <= byte_read;
-    end
-end
-
 // start test and check sda_test
 reg [7:0] byte_write_sync;
-reg finish_test_sync;
 always @(posedge clk or negedge rst_n) begin
-    finish_test_sync <= finish_test;
     byte_write_sync <= byte_write;
 end
 always @(posedge clk or negedge rst_n) begin
@@ -193,21 +177,21 @@ always @(posedge clk or negedge rst_n) begin
         current_test_count <= 32'b0;
         error_count <= 1'b0;
     end
-    else if(finish_test_sync) begin
+    else if(finish_test) begin
         current_test_count <= current_test_count + 1;
-        if(byte_read != byte_write_sync) begin
+        if(data_test != byte_write_sync) begin
             error_count <= error_count + 1;
             $display("--%02d--FAIL-- write/read: %h/%h",
                      current_test_count,
                      byte_write_sync,
-                     byte_read);
+                     data_test);
         end
         else begin
             error_count <= error_count;
             $display("--%02d--PASS-- write/read: %h/%h",
                      current_test_count,
                      byte_write_sync,
-                     byte_read);
+                     data_test);
         end
     end
     else begin

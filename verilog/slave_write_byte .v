@@ -2,20 +2,18 @@ module I2C_slave_write_byte (
            input clock,
            input reset_n,
            input enable,    // enable signal, expected to be a pulse at scl falling edge
-           input data,      // data write to I2C bus
-           output load,     // drive shifter to load data bit by bit
+           input [7:0] data,// data write to I2C bus
            output finish,   // finish signal
            input scl,
            output sda);
 
 // instantiate I2C_slave_write_bit
-wire write_bit_enable;
-wire write_bit_finish;
+wire write_bit_enable, write_bit_data, write_bit_finish;
 I2C_slave_write_bit write_bit(
                         .clock(clock),
                         .reset_n(reset_n),
                         .enable(write_bit_enable),
-                        .data(data),
+                        .data(write_bit_data),
                         .finish(write_bit_finish),
                         .scl(scl),
                         .sda(sda)
@@ -55,6 +53,23 @@ always @(posedge clock or negedge reset_n ) begin
     end
 end
 
+// load data to shift register
+reg [7:0] shift_register;
+always @(posedge clock or negedge reset_n) begin
+    if (!reset_n) begin
+        shift_register <= 8'b0000_0000;
+    end
+    else if ((~enabled) && scl_falling_edge) begin
+        shift_register <= data;
+    end
+    else if (write_bit_finish) begin
+        shift_register <= {shift_register[6:0], 1'b0};
+    end
+    else begin
+        shift_register <= shift_register;
+    end
+end
+
 // track whether module has been enabled to prevent unexpected read_bit_enable
 reg enabled;
 always @(posedge clock or negedge reset_n) begin
@@ -76,8 +91,8 @@ end
 // first bit is enabled by enable signal, others are enabled by scl falling edge
 assign write_bit_enable = enable || (scl_falling_edge && enabled);
 
-// generate load
-assign load = write_bit_finish;
+// generate write_bit_data
+assign write_bit_data = shift_register[7];
 
 // generate finish
 assign finish = write_bit_finish && (counter == 3'b111);

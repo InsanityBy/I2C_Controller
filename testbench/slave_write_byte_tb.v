@@ -2,7 +2,8 @@
 
 module testbench();
 reg clk, rst_n, enable_test;
-wire data_test, load_test, finish_test;
+wire [7:0] data_test;
+wire finish_test;
 reg scl_test;
 wire sda_test;
 
@@ -20,7 +21,6 @@ I2C_slave_write_byte test_module(
                          .reset_n(rst_n),
                          .enable(enable_test),
                          .data(data_test),
-                         .load(load_test),
                          .finish(finish_test),
                          .scl(scl_test),
                          .sda(sda_test)
@@ -136,37 +136,20 @@ always @(posedge clk or negedge rst_n) begin
     end
 end
 
-// load data to data shifter
+// load data to submodule
 reg [(test_number * 8 - 1) : 0] data_to_write;
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         data_to_write <= test_data_value;
     end
-    else if(test_start && (bit_counter == 3'b0) && scl_test_falling_edge) begin
+    else if(test_start && finish_test) begin
         data_to_write <= {data_to_write[(test_number * 8 - 9) : 0], 8'b0};
     end
     else begin
         data_to_write <= data_to_write;
     end
 end
-
-// load data to test module
-reg [7:0] byte_to_write;
-assign data_test = byte_to_write[7];
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        byte_to_write <= 8'b0;
-    end
-    else if(test_start && (bit_counter == 3'b0) && scl_test_falling_edge) begin
-        byte_to_write <= data_to_write[(test_number * 8 - 1) : (test_number * 8 - 8)];
-    end
-    else if(load_test) begin
-        byte_to_write <= {byte_to_write[6:0], 1'b0};
-    end
-    else begin
-        byte_to_write <= byte_to_write;
-    end
-end
+assign data_test = data_to_write[(test_number * 8 - 1) : (test_number * 8 - 8)];
 
 // start test and check sda_test
 always @(posedge clk or negedge rst_n) begin

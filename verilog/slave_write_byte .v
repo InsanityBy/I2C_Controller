@@ -20,6 +20,7 @@ I2C_slave_write_bit write_bit(
                         .scl(scl),
                         .sda(sda)
                     );
+
 // detect scl falling edge
 reg scl_last_state;
 wire scl_falling_edge;
@@ -54,9 +55,26 @@ always @(posedge clock or negedge reset_n ) begin
     end
 end
 
+// track whether module has been enabled to prevent unexpected read_bit_enable
+reg enabled;
+always @(posedge clock or negedge reset_n) begin
+    if (!reset_n) begin
+        enabled <= 1'b0;
+    end
+    else if (enable && (~scl)) begin
+        enabled <= 1'b1;
+    end
+    else if((counter == 3'b111) && write_bit_finish) begin
+        enabled <= 1'b0;
+    end
+    else begin
+        enabled <= enabled;
+    end
+end
+
 // generate write_bit_enable
 // first bit is enabled by enable signal, others are enabled by scl falling edge
-assign write_bit_enable = enable || scl_falling_edge;
+assign write_bit_enable = enable || (scl_falling_edge && enabled);
 
 // generate load
 assign load = write_bit_finish;

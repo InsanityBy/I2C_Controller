@@ -8,7 +8,7 @@ wire sda_test;
 
 // test parameters
 parameter test_data_value = 32'h13_57_9b_df;
-parameter test_number = 4;
+parameter test_number = 4;       // test_number * 8 <= length of test_data_value
 parameter clk_divider_ratio = 8; // period_of_SCL = clk_divider_ratio * period_of_clk
 reg test_start;
 reg [31:0] current_test_count;
@@ -62,13 +62,16 @@ always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         counter <= 32'b0;
     end
-    else begin
+    else if (test_start) begin
         if (counter == (clk_divider_ratio - 1)) begin
             counter <= 32'b0;
         end
         else begin
             counter <= counter + 1;
         end
+    end
+    else begin
+        counter <= 32'b0;
     end
 end
 // generate scl_test
@@ -101,47 +104,61 @@ end
 assign scl_test_rising_edge = (~scl_test_last_state) && scl_test;
 assign scl_test_falling_edge = scl_test_last_state && (~scl_test);
 
+// 3-bit counter for reading/writing 1-byte data bit by bit
+reg [2: 0] bit_counter;
+always @(posedge clk or negedge rst_n ) begin
+    if (!rst_n) begin
+        bit_counter <= 3'b000;
+    end
+    else if(test_start && scl_test_rising_edge) begin
+        if(bit_counter == 3'b111) begin
+            bit_counter <= 3'b000;
+        end
+        else begin
+            bit_counter <= bit_counter + 1;
+        end
+    end
+    else begin
+        bit_counter <= bit_counter;
+    end
+end
+
 // enable_test
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         enable_test <= 1'b0;
     end
-    else if (!test_start) begin
-        enable_test <= 1'b0;
-    end
-    else if (scl_test_falling_edge) begin
+    else if (test_start && (bit_counter == 3'b0) && scl_test_falling_edge) begin
         enable_test <= 1'b1;
     end
-    else if (finish_test) begin
-        enable_test <= 1'b0;
-    end
     else begin
-        enable_test <= enable_test;
+        enable_test <= 1'b0;
     end
 end
 
 // load data to data shifter
 reg [(test_number * 8 - 1) : 0] data_to_write;
-reg [7:0] byte_to_write;
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        data_to_write <= {test_data_value[(test_number * 8 - 9) : 0], 8'b0};
-        byte_to_write <= test_data_value[(test_number * 8 - 1) : (test_number * 8 - 8)];
+        data_to_write <= test_data_value;
     end
-    else if(finish_test) begin
-        byte_to_write <= data_to_write[(test_number * 8 - 1) : (test_number * 8 - 8)];
+    else if(test_start && (bit_counter == 3'b0) && scl_test_falling_edge) begin
         data_to_write <= {data_to_write[(test_number * 8 - 9) : 0], 8'b0};
     end
     else begin
         data_to_write <= data_to_write;
     end
 end
+
 // load data to test module
+reg [7:0] byte_to_write;
 assign data_test = byte_to_write[7];
-// load data
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         byte_to_write <= 8'b0;
+    end
+    else if(test_start && (bit_counter == 3'b0) && scl_test_falling_edge) begin
+        byte_to_write <= data_to_write[(test_number * 8 - 1) : (test_number * 8 - 8)];
     end
     else if(load_test) begin
         byte_to_write <= {byte_to_write[6:0], 1'b0};
@@ -151,40 +168,42 @@ always @(posedge clk or negedge rst_n) begin
     end
 end
 
-// check sda_test
-reg [2:0] bit_count;
+// start test and check sda_test
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        bit_count <= 3'b0;
         current_test_count <= 32'b0;
         error_count <= 1'b0;
     end
     else if(test_start && scl_test_rising_edge && scl_test) begin
-        if (bit_count == 3'b111) begin
-            bit_count <= 3'b0;
+        if (bit_counter == 3'b111) begin
             current_test_count <= current_test_count + 1;
         end
         else begin
-            bit_count <= bit_count + 1;
             current_test_count <= current_test_count;
         end
-        if(sda_test != byte_to_write[7]) begin
+        if(sda_test != test_data_value[8 * (test_number - current_test_count) - 1 - bit_counter]) begin
             error_count <= error_count + 1;
-            $display("--%02d-%d--FAIL-- write/read: %h", current_test_count, bit_count, byte_to_write[7], sda_test);
+            $display("--%02d-%d--FAIL-- write/read: %h",
+                     current_test_count,
+                     bit_counter,
+                     test_data_value[8 * (test_number - current_test_count) - 1 - bit_counter],
+                     sda_test);
         end
         else begin
-            $display("--%02d-%d--PASS-- write/read: %h", current_test_count, bit_count,  byte_to_write[7], sda_test);
-            error_count <= error_count;
+            $display("--%02d-%d--PASS-- write/read: %h",
+                     current_test_count,
+                     bit_counter,
+                     test_data_value[8 * (test_number - current_test_count) - 1 - bit_counter],
+                     sda_test);
         end
     end
     else begin
-        bit_count <= bit_count;
         current_test_count <= current_test_count;
         error_count <= error_count;
     end
 end
 
-// start test and generate prompt and log
+// generate prompt and log
 initial begin
     test_start = 1'b0;
     #20 test_start = 1'b1;

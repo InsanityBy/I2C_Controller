@@ -247,13 +247,12 @@ always @(posedge clk or negedge rst_n) begin
 end
 
 // test slave write data
-reg [7:0] byte_to_write;
+reg [transfer_byte_number * 8 - 1 : 0] data_to_load;
 reg [7:0] byte_read;
-assign data_write_test = byte_to_write;
+assign data_write_test = data_to_load[transfer_byte_number * 8 - 1 : transfer_byte_number * 8 - 8];
 always @(posedge clk or negedge rst_n) begin
     if(!rst_n) begin
-        byte_to_write <= test_data_value[transfer_byte_number * 8 - 1 :
-                                         transfer_byte_number * 8 - 8];
+        data_to_load <= test_data_value;
         byte_read <= 8'b0;
         sda_in <= 1'b1;
         bit_counter <= 32'b0;
@@ -288,7 +287,7 @@ always @(posedge clk or negedge rst_n) begin
             end
         end
         else if (bit_counter <= transfer_byte_number * 10 + 10) begin    // module write data
-            if ((bit_counter % 10) <= 32'd8) begin  // read data from module
+            if (((bit_counter % 10) >= 32'd1) && ((bit_counter % 10) <= 32'd8)) begin  // read data from module
                 if (scl_in_rising_edge) begin
                     byte_read <= {byte_read[6:0], sda_out};
                     bit_counter <= bit_counter + 1;
@@ -302,7 +301,7 @@ always @(posedge clk or negedge rst_n) begin
             end
             else if ((bit_counter % 10)  == 32'd0) begin    // wait module check ack and load next byte to module
                 if (scl_in_rising_edge) begin
-                    byte_to_write = {byte_to_write[transfer_byte_number * 8 - 9 : 0], 8'b0};
+                    data_to_load <= {data_to_load[transfer_byte_number * 8 - 9 : 0], 8'b0};
                     bit_counter <= bit_counter + 1;
                 end
             end

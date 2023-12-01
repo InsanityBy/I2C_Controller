@@ -295,7 +295,12 @@ always @(posedge clk or negedge rst_n) begin
             end
             else if ((bit_counter % 10)  == 32'd9) begin // write ack to module
                 if (scl_in_falling_edge) begin
-                    sda_in <= 1'b0;
+                    if (bit_counter == transfer_byte_number * 10 + 9) begin // write NACK
+                        sda_in <= 1'b1;
+                    end
+                    else begin
+                        sda_in <= 1'b0;
+                    end
                     bit_counter <= bit_counter + 1;
                 end
             end

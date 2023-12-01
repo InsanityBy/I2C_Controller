@@ -299,6 +299,7 @@ always @(*) begin
                     ack_enable = 1'b0;
                     ack_data = 1'b0;
                 end
+                {write_enable, read_enable, check_enable} = 3'b000;
             end
             WRITE_ADDRESS_ACK: begin
                 if (scl_falling_edge) begin
@@ -321,7 +322,7 @@ always @(*) begin
                 else begin
                     read_enable = 1'b0;
                 end
-                {write_enable, ack_enable, check_enable} = 4'b0000;
+                {write_enable, ack_enable, check_enable} = 3'b000;
                 ack_data = 1'b0;
             end
             READ_DATA: begin

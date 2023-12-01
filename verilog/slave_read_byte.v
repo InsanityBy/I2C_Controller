@@ -42,6 +42,9 @@ always @(posedge clock or negedge reset_n) begin
     if (!reset_n) begin
         counter <= 3'b000;
     end
+    else if (enable) begin
+        counter <= 3'b000;
+    end
     else if(read_bit_finish) begin
         if(counter == 3'b111) begin
             counter <= 3'b000;

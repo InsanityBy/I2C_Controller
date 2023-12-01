@@ -42,7 +42,7 @@ I2C_slave_write_bit write_ack(
                     );
 
 // sda_out
-assign sda_out = write_enable ? write_sda : (ack_enable ? ack_sda : 1'b1);
+assign sda_out = ack_enable ? ack_sda : write_sda;
 
 // submodule to read 1 byte
 reg read_enable;

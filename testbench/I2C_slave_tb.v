@@ -287,9 +287,16 @@ always @(posedge clk or negedge rst_n) begin
             end
         end
         else if (bit_counter <= transfer_byte_number * 10 + 10) begin    // module write data
-            if (((bit_counter % 10) >= 32'd1) && ((bit_counter % 10) <= 32'd8)) begin  // read data from module
+            if (((bit_counter % 10) >= 32'd1) && ((bit_counter % 10) <= 32'd7)) begin  // read data from module
                 if (scl_in_rising_edge) begin
                     byte_read <= {byte_read[6:0], sda_out};
+                    bit_counter <= bit_counter + 1;
+                end
+            end
+            else if ((bit_counter % 10)  == 32'd8) begin // read last bit and load next byte to module
+                if (scl_in_rising_edge) begin
+                    byte_read <= {byte_read[6:0], sda_out};
+                    data_to_load <= {data_to_load[transfer_byte_number * 8 - 9 : 0], 8'b0}; // load data
                     bit_counter <= bit_counter + 1;
                 end
             end
@@ -304,9 +311,8 @@ always @(posedge clk or negedge rst_n) begin
                     bit_counter <= bit_counter + 1;
                 end
             end
-            else if ((bit_counter % 10)  == 32'd0) begin    // wait module check ack and load next byte to module
+            else if ((bit_counter % 10)  == 32'd0) begin    // wait module check ack
                 if (scl_in_rising_edge) begin
-                    data_to_load <= {data_to_load[transfer_byte_number * 8 - 9 : 0], 8'b0};
                     bit_counter <= bit_counter + 1;
                 end
             end

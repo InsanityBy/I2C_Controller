@@ -1,60 +1,61 @@
 module I2C_slave_write_bit (
-           input clock,
-           input reset_n,
-           input enable,    // enable signal, expected to be a pulse at scl falling edge
-           input data,      // data write to I2C bus
-           output finish,   // finish signal
-           input scl,
-           output reg sda);
+    input clk,
+    input rst_n,
+    input bit_write_en,  // enable, expected to be high at or after scl falling edge
+    input bit_write_i,  // 1-bit data write to I2C bus
+    output bit_write_finish,
+    input scl_i,
+    output reg sda_o
+);
 
-// detect scl falling and rising edge
-reg scl_last_state;
-wire scl_rising_edge, scl_falling_edge;
-// save scl last state
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        scl_last_state <= 1'b1;
+    // detect scl_i falling and rising edge
+    reg scl_last;
+    wire scl_rise, scl_fall;
+    // save scl_i last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scl_last <= 1'b1;
+        end
+        else begin
+            scl_last <= scl_i;
+        end
     end
-    else begin
-        scl_last_state <= scl;
-    end
-end
-// scl falling edge: 1 -> 0
-assign scl_falling_edge = scl_last_state && (~scl);
-// scl rising edge: 0 -> 1
-assign scl_rising_edge = (~scl_last_state) && scl;
+    // scl_i falling edge: 1 -> 0
+    assign scl_fall = scl_last && (~scl_i);
+    // scl_i rising edge: 0 -> 1
+    assign scl_rise = (~scl_last) && scl_i;
 
-// generate sda output, write once at enable high and scl low
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        sda <= 1'b1;
+    // track whether module has been enabled to prevent unexpected finish flag
+    reg enabled;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            enabled <= 1'b0;
+        end
+        else if (bit_write_en) begin
+            enabled <= 1'b1;
+        end
+        else if ((~bit_write_en) || scl_fall) begin
+            enabled <= 1'b0;
+        end
+        else begin
+            enabled <= enabled;
+        end
     end
-    else if (enable && (~scl)) begin
-        sda <= data;
-    end
-    else begin
-        sda <= sda;
-    end
-end
 
-// track whether module has been enabled to prevent unexpected finish flag
-reg enabled;
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        enabled <= 1'b0;
+    // sda_o, write once at bit_write_en high and scl_i low
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sda_o <= 1'b1;
+        end
+        else if (bit_write_en && (~scl_i)) begin
+            sda_o <= bit_write_i;
+        end
+        else begin
+            sda_o <= sda_o;
+        end
     end
-    else if (enable && (~scl)) begin
-        enabled <= 1'b1;
-    end
-    else if(scl_rising_edge) begin
-        enabled <= 1'b0;
-    end
-    else begin
-        enabled <= enabled;
-    end
-end
 
-// generate finish flag
-assign finish = enabled && scl_rising_edge;
+    // bit_write_finish, the second falling edge of scl_i after module enabled
+    assign bit_write_finish = enabled && scl_fall;
 
 endmodule

@@ -1,74 +1,75 @@
-module I2C_slave_read_bit(
-           input clock,
-           input reset_n,
-           input enable,    // enable signal, expected to be a pulse at scl rising edge
-           output reg data, // data read from I2C bus
-           output reg error,// error signal
-           output finish,   // finish signal
-           input scl,
-           input sda);
+module I2C_slave_read_bit (
+    input clk,
+    input rst_n,
+    input bit_read_en,  // enable, expected to be high at or after scl falling edge
+    output reg bit_read_o,  // 1-bit data read from I2C bus
+    output bit_read_err,
+    output bit_read_finish,
+    input scl_i,
+    input sda_i
+);
 
-// detect scl falling and rising edge
-reg scl_last_state;
-wire scl_rising_edge, scl_falling_edge;
-// save scl last state
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        scl_last_state <= 1'b1;
+    // detect scl_i falling and rising edge
+    reg scl_last;
+    wire scl_rise, scl_fall;
+    // save scl_i last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scl_last <= 1'b1;
+        end
+        else begin
+            scl_last <= scl_i;
+        end
     end
-    else begin
-        scl_last_state <= scl;
-    end
-end
-// scl falling edge: 1 -> 0
-assign scl_falling_edge = scl_last_state && (~scl);
-// scl rising edge: 0 -> 1
-assign scl_rising_edge = (~scl_last_state) && scl;
+    // scl_i falling edge: 1 -> 0
+    assign scl_fall = scl_last && (~scl_i);
+    // scl_i rising edge: 0 -> 1
+    assign scl_rise = (~scl_last) && scl_i;
 
-// generate data output, read once at enable high and scl high
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        data <= 1'b0;
+    // track whether module has been enabled to prevent unexpected finish and error flag
+    reg enabled;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            enabled <= 1'b0;
+        end
+        else if (bit_read_en) begin
+            enabled <= 1'b1;
+        end
+        else if ((~bit_read_en) || scl_fall) begin
+            enabled <= 1'b0;
+        end
+        else begin
+            enabled <= enabled;
+        end
     end
-    else if (enable && scl) begin
-        data <= sda;
-    end
-    else begin
-        data <= data;
-    end
-end
 
-// track whether module has been enabled to prevent unexpected finish flag
-reg enabled;
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        enabled <= 1'b0;
+    // bit_read_o, read once at bit_read_en high and scl_i high
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            bit_read_o <= 1'b0;
+        end
+        else if (enabled && scl_rise) begin
+            bit_read_o <= sda_i;
+        end
+        else begin
+            bit_read_o <= bit_read_o;
+        end
     end
-    else if (enable && scl) begin
-        enabled <= 1'b1;
-    end
-    else if(scl_falling_edge) begin
-        enabled <= 1'b0;
-    end
-    else begin
-        enabled <= enabled;
-    end
-end
 
-// generate error output, check whether sda changed during scl high
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        error <= 1'b0;
+    // bit_read_err, check whether sda_i changed during scl_i high
+    reg sda_last;
+    // save sda_i last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sda_last <= 1'b1;
+        end
+        else begin
+            sda_last <= sda_i;
+        end
     end
-    else if (enabled && scl && (data != sda)) begin
-        error <= 1'b1;
-    end
-    else begin
-        error <= error;
-    end
-end
+    assign bit_read_err = enabled && scl_i && (sda_last != sda_i);
 
-// generate finish flag
-assign finish = enabled && scl_falling_edge;
+    // bit_read_finish, the first falling edge of scl_i after module enabled
+    assign bit_read_finish = enabled && scl_fall;
 
 endmodule

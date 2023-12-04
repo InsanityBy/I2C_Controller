@@ -5,10 +5,10 @@ module testbench ();
     wire bit_read_o, bit_read_err, bit_read_finish;
     reg scl_i, sda_i;
 
-    // test parameters
+    // test parameters and variables
     parameter data_test_value = 32'h13_57_9b_df;
     parameter test_number = 32;  // no more than length of data_test_value
-    parameter clk_divisor = 8;  // period_of_SCL = clk_divisor * period_of_clk
+    parameter clk_divisor = 4;  // period_of_SCL = clk_divisor * period_of_clk
     reg     test_start;
     integer test_cnt;
     integer error_cnt;
@@ -28,7 +28,7 @@ module testbench ();
     // use fsdb/vcd or vcd to save wave
 `ifdef fsdbdump
     initial begin
-        $display("**************** fsdb file dump is turned on ***************");
+        $display("\n**************** fsdb file dump is turned on ***************");
         $fsdbDumpfile("wave.fsdb");
         $fsdbDumpvars(0);
         #100000 $fsdbDumpoff;
@@ -36,7 +36,7 @@ module testbench ();
 `endif
 `ifdef vcddump
     initial begin
-        $display("**************** vcd file dump is turned on ****************");
+        $display("\n**************** vcd file dump is turned on ****************");
         $dumpfile("wave.vcd");
         $dumpvars(0);
         #100000 $dumpoff;
@@ -58,13 +58,16 @@ module testbench ();
         if (!rst_n) begin
             counter <= 32'b0;
         end
-        else begin
+        else if (test_start) begin
             if (counter == (clk_divisor - 1)) begin
                 counter <= 32'b0;
             end
             else begin
                 counter <= counter + 1;
             end
+        end
+        else begin
+            counter <= counter;
         end
     end
 
@@ -98,43 +101,35 @@ module testbench ();
     assign scl_rise = (~scl_last) && scl_i;
     assign scl_fall = scl_last && (~scl_i);
 
-    // enable test module
+    // test module to read 1 bit
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            sda_i       <= 1'b1;
             bit_read_en <= 1'b0;
         end
-        else begin
-            bit_read_en <= scl_rise && test_start;
-        end
-    end
-
-    // write data to test module
-    reg [test_number-1:0] data_to_write;
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            sda_i         <= 1'b1;
-            data_to_write <= data_test_value;
-        end
-        else if (scl_fall) begin
-            sda_i <= data_to_write[test_number-1];
-            data_to_write <= {
-                data_to_write[(test_number-2):0], data_to_write[test_number-1]
-            };
-        end
-        else begin
-            sda_i         <= sda_i;
-            data_to_write <= data_to_write;
-        end
-    end
-
-    // check bit_read_o
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            test_cnt  <= 0;
-            error_cnt <= 0;
+        else if (test_start && scl_fall) begin
+            sda_i       <= data_test_value[test_number-test_cnt-1];
+            bit_read_en <= 1'b1;
         end
         else if (bit_read_finish) begin
-            test_cnt <= test_cnt + 1;
+            sda_i       <= sda_i;
+            bit_read_en <= 1'b0;
+        end
+    end
+
+    // start test and generate prompt and log
+    initial begin
+        test_start = 1'b0;
+        error_cnt  = 0;
+
+        // test and check
+        $display("\n*********** 'slave_read_bit' module test started ***********\n");
+        for (test_cnt = 0; test_cnt < test_number; test_cnt = test_cnt + 1) begin
+            #200 test_start = 1'b1;
+            wait (bit_read_finish);
+            test_start = 1'b0;
+            wait (~bit_read_finish);
+            // check read and written data
             if (bit_read_o != data_test_value[test_number-test_cnt-1]) begin
                 error_cnt <= error_cnt + 1;
                 $display("++%02d++FAIL++ write/read: %b/%b", test_cnt,
@@ -146,21 +141,9 @@ module testbench ();
                 error_cnt <= error_cnt;
             end
         end
-        else begin
-            test_cnt  <= test_cnt;
-            error_cnt <= error_cnt;
-        end
-    end
+        $display("------------------------------------------------------------");
 
-    // start test and generate prompt and log
-    initial begin
-        test_start = 1'b0;
-        #20 test_start = 1'b1;
-        $display("*********** 'slave_read_bit' module test started ***********");
-        // wait till finished
-        wait (test_cnt == test_number);
-        test_start = 1'b0;
-        #500 $display("------------------------------------------------------------");
+        // result
         if (error_cnt == 0) begin
             $display("result: passed with 0 errors in %02d tests", test_number);
         end
@@ -168,7 +151,7 @@ module testbench ();
             $display("result: failed with %02d errors in %02d tests", error_cnt,
                      test_number);
         end
-        $display("*********** 'slave_read_bit' module test finished **********");
+        $display("\n*********** 'slave_read_bit' module test finished **********\n");
         $finish;
     end
 

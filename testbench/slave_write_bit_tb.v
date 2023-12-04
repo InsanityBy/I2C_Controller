@@ -102,18 +102,18 @@ module testbench ();
     assign scl_fall = scl_last && (~scl_i);
 
     // test module to write 1 bit
-    reg bit_written;
+    reg bit_read;
     assign bit_write_i = data_test_value[test_number-test_cnt-1];
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             bit_write_en <= 1'b0;
-            bit_written  <= 1'b0;
+            bit_read  <= 1'b0;
         end
         else if (test_start && scl_fall) begin
             bit_write_en <= 1'b1;
         end
         else if (scl_rise) begin
-            bit_written <= sda_o;
+            bit_read <= sda_o;
         end
         else if (bit_write_finish) begin
             bit_write_en <= 1'b0;
@@ -133,14 +133,14 @@ module testbench ();
             test_start = 1'b0;
             wait (~bit_write_finish);
             // check read and written data
-            if (bit_written != data_test_value[test_number-test_cnt-1]) begin
+            if (bit_read != data_test_value[test_number-test_cnt-1]) begin
                 error_cnt <= error_cnt + 1;
                 $display("++%02d++FAIL++ write/read: %b/%b", test_cnt,
-                         data_test_value[test_number-test_cnt-1], bit_written);
+                         data_test_value[test_number-test_cnt-1], bit_read);
             end
             else begin
                 $display("--%02d--PASS-- write/read: %b/%b", test_cnt,
-                         data_test_value[test_number-test_cnt-1], bit_written);
+                         data_test_value[test_number-test_cnt-1], bit_read);
                 error_cnt <= error_cnt;
             end
         end

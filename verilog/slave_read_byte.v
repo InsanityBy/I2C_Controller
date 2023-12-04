@@ -1,125 +1,128 @@
 module I2C_slave_read_byte (
-           input clock,
-           input reset_n,
-           input enable,     // enable signal, expected to be a pulse at scl rising edge
-           output [7:0] data,// data read from I2C bus
-           output reg error, // error signal
-           output reg finish,// finish signal
-           input scl,
-           input sda);
+    input clk,
+    input rst_n,
+    input byte_read_en,  // enable, expected to be high at or after scl falling edge
+    output [7:0] byte_read_o,  // 1-byte data read from I2C bus
+    output reg byte_read_err,
+    output reg byte_read_finish,
+    input scl_i,
+    input sda_i
+);
 
-// instantiate I2C_slave_read_bit
-wire read_bit_enable, read_bit_data, read_bit_finish, read_bit_error;
-I2C_slave_read_bit read_bit(
-                       .clock(clock),
-                       .reset_n(reset_n),
-                       .enable(read_bit_enable),
-                       .data(read_bit_data),
-                       .error(read_bit_error),
-                       .finish(read_bit_finish),
-                       .scl(scl),
-                       .sda(sda)
-                   );
+    // instantiate I2C_slave_read_bit
+    wire bit_read_en, bit_read_o, bit_read_err, bit_read_finish;
+    I2C_slave_read_bit read_bit (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .bit_read_en    (bit_read_en),
+        .bit_read_o     (bit_read_o),
+        .bit_read_err   (bit_read_err),
+        .bit_read_finish(bit_read_finish),
+        .scl_i          (scl_i),
+        .sda_i          (sda_i)
+    );
 
-// detect scl rising edge
-reg scl_last_state;
-wire scl_rising_edge;
-// save scl last state
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        scl_last_state <= 1'b1;
-    end
-    else begin
-        scl_last_state <= scl;
-    end
-end
-// scl rising edge: 0 -> 1
-assign scl_rising_edge = (~scl_last_state) && scl;
-
-// 3-bit counter for reading 1-byte data bit by bit
-reg [2: 0] counter;
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        counter <= 3'b000;
-    end
-    else if (enable) begin
-        counter <= 3'b000;
-    end
-    else if(read_bit_finish) begin
-        if(counter == 3'b111) begin
-            counter <= 3'b000;
+    // detect scl_i falling edge
+    reg  scl_last;
+    wire scl_fall;
+    // save scl_i last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scl_last <= 1'b1;
         end
         else begin
-            counter <= counter + 1;
+            scl_last <= scl_i;
         end
     end
-    else begin
-        counter <= counter;
-    end
-end
+    // scl_i falling edge: 0 -> 1
+    assign scl_fall = scl_last && (~scl_i);
 
-// save data to shift register
-reg [7:0] shift_register;
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        shift_register <= 8'b0000_0000;
+    // 3-bit counter for reading 1-byte data bit by bit
+    reg [2:0] counter;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            counter <= 3'b000;
+        end
+        else if (!byte_read_en) begin
+            counter <= 3'b000;
+        end
+        else if (bit_read_finish) begin
+            if (counter == 3'b111) begin
+                counter <= 3'b000;
+            end
+            else begin
+                counter <= counter + 1;
+            end
+        end
+        else begin
+            counter <= counter;
+        end
     end
-    else if (read_bit_finish) begin
-        shift_register <= {shift_register[6:0], read_bit_data};
-    end
-    else begin
-        shift_register <= shift_register;
-    end
-end
 
-// track whether module has been enabled to prevent unexpected read_bit_enable
-reg enabled;
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        enabled <= 1'b0;
+    // track whether module has been enabled to prevent unexpected finish and error flag
+    reg enabled;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            enabled <= 1'b0;
+        end
+        else if (byte_read_en) begin
+            enabled <= 1'b1;
+        end
+        else if ((~byte_read_en) || ((counter == 3'b111) && bit_read_finish)) begin
+            enabled <= 1'b0;
+        end
+        else begin
+            enabled <= enabled;
+        end
     end
-    else if (enable && scl) begin
-        enabled <= 1'b1;
-    end
-    else if((counter == 3'b111) && read_bit_finish) begin
-        enabled <= 1'b0;
-    end
-    else begin
-        enabled <= enabled;
-    end
-end
 
-// generate error
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        error <= 1'b0;
-    end
-    else if(enabled && read_bit_error) begin
-        error <= 1'b1;
-    end
-    else begin
-        error <= error;
-    end
-end
+    // bit_read_en
+    assign bit_read_en = byte_read_en;
 
-// generate read_bit_enable
-// first bit is enabled by enable signal, others are enabled by scl rising edge
-assign read_bit_enable = enable || (scl_rising_edge && enabled);
+    // save bit_read_o to shift register
+    reg [7:0] shift_register;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            shift_register <= 8'b0000_0000;
+        end
+        else if (bit_read_finish) begin
+            shift_register <= {shift_register[6:0], bit_read_o};
+        end
+        else begin
+            shift_register <= shift_register;
+        end
+    end
 
-// generate data
-assign data = shift_register;
+    // byte_read_o
+    assign byte_read_o = shift_register;
 
-// generate finish
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        finish <= 1'b0;
+    // byte_read_err, check whether error occurred while reading 1-bit data
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            byte_read_err <= 1'b0;
+        end
+        else if (!enabled) begin
+            byte_read_err <= 1'b0;
+        end
+        else if (bit_read_err) begin
+            byte_read_err <= 1'b1;
+        end
+        else begin
+            byte_read_err <= byte_read_err;
+        end
     end
-    else if(read_bit_finish && (counter == 3'b111)) begin
-        finish <= 1'b1;
+
+    // byte_read_finish, when 8-bit data reding finished
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            byte_read_finish <= 1'b0;
+        end
+        else if (bit_read_finish && (counter == 3'b111)) begin
+            byte_read_finish <= 1'b1;
+        end
+        else begin
+            byte_read_finish <= 1'b0;
+        end
     end
-    else begin
-        finish <= 1'b0;
-    end
-end
 
 endmodule

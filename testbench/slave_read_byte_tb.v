@@ -1,223 +1,169 @@
-`timescale 1ns/10ps
+`timescale 1ns / 10ps
 
-module testbench();
-reg clk, rst_n, enable_test;
-wire [7:0]data_test;
-wire finish_test, error_test;
-reg scl_test, sda_test;
+module testbench ();
+    reg clk, rst_n, byte_read_en;
+    wire [7:0] byte_read_o;
+    wire byte_read_err, byte_read_finish;
+    reg scl_i, sda_i;
 
-// test parameters
-parameter test_data_value = 32'h13_57_9b_df;
-parameter test_number = 4;       // test_number * 8 <= length of test_data_value
-parameter clk_divider_ratio = 8; // period_of_SCL = clk_divider_ratio * period_of_clk
-reg test_start;
-reg [31:0] current_test_count;
-reg [4:0] error_count;
+    // test parameters and variables
+    parameter data_test_value = 32'h13_57_9b_df;
+    parameter test_number = 4;  // 4 * test_number <= length of data_test_value
+    parameter clk_divisor = 4;  // period_of_SCL = clk_divisor * period_of_clk
+    reg     test_start;
+    integer test_cnt;
+    integer error_cnt;
 
-// instantiate the submodule
-I2C_slave_read_byte test_module(
-                        .clock(clk),
-                        .reset_n(rst_n),
-                        .enable(enable_test),
-                        .data(data_test),
-                        .error(error_test),
-                        .finish(finish_test),
-                        .scl(scl_test),
-                        .sda(sda_test)
-                    );
+    // instantiate the submodule
+    I2C_slave_read_byte test_module (
+        .clk             (clk),
+        .rst_n           (rst_n),
+        .byte_read_en    (byte_read_en),
+        .byte_read_o     (byte_read_o),
+        .byte_read_err   (byte_read_err),
+        .byte_read_finish(byte_read_finish),
+        .scl_i           (scl_i),
+        .sda_i           (sda_i)
+    );
 
-// use fsdb/vcd or vcd to save wave
-initial begin
+    // use fsdb/vcd or vcd to save wave
 `ifdef fsdbdump
-    $display("\n******** fsdb file dump is turned on ******** \n");
-    $fsdbDumpfile("wave.fsdb");
-    $fsdbDumpvars(0);
-    #100000
-     $fsdbDumpoff;
+    initial begin
+        $display("\n**************** fsdb file dump is turned on ***************");
+        $fsdbDumpfile("wave.fsdb");
+        $fsdbDumpvars(0);
+        #100000 $fsdbDumpoff;
+    end
 `endif
 `ifdef vcddump
-
-    $display("******** vcd file dump is turned on******** ");
-    $dumpfile("wave.vcd");
-    $dumpvars(0);
-    #100000
-     $dumpoff;
-`endif
-end
-
-// generate clock and reset
-initial begin
-    clk       = 0;
-    rst_n     = 1;
-    #10 rst_n = 0;
-    #10 rst_n = 1;
-    forever
-        #10 clk = ~clk;
-end
-
-// scl_test
-// counter to generate scl_test
-reg [31:0] counter;
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        counter <= 32'b0;
+    initial begin
+        $display("\n**************** vcd file dump is turned on ****************");
+        $dumpfile("wave.vcd");
+        $dumpvars(0);
+        #100000 $dumpoff;
     end
-    else if (test_start) begin
-        if (counter == (clk_divider_ratio - 1)) begin
+`endif
+
+    // generate clock and reset
+    initial begin
+        clk   = 0;
+        rst_n = 1;
+        #10 rst_n = 0;
+        #10 rst_n = 1;
+        forever #10 clk = ~clk;
+    end
+
+    // counter for clock division
+    reg [31:0] counter;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             counter <= 32'b0;
         end
-        else begin
-            counter <= counter + 1;
-        end
-    end
-    else begin
-        counter <= 32'b0;
-    end
-end
-// generate scl_test
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        scl_test <= 1'b1;
-    end
-    else begin
-        if (counter < (clk_divider_ratio / 2)) begin
-            scl_test <= 1'b1;
+        else if (test_start) begin
+            if (counter == (clk_divisor - 1)) begin
+                counter <= 32'b0;
+            end
+            else begin
+                counter <= counter + 1;
+            end
         end
         else begin
-            scl_test <= 1'b0;
+            counter <= counter;
         end
     end
-end
 
-// detect scl rising and falling edge
-reg scl_test_last_state;
-wire scl_test_rising_edge, scl_test_falling_edge;
-// save scl last state
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        scl_test_last_state <= 1'b1;
-    end
-    else begin
-        scl_test_last_state <= scl_test;
-    end
-end
-assign scl_test_rising_edge = (~scl_test_last_state) && scl_test;
-assign scl_test_falling_edge = scl_test_last_state && (~scl_test);
-
-// 3-bit counter for reading/writing 1-byte data bit by bit
-reg [2: 0] bit_counter;
-always @(posedge clk or negedge rst_n ) begin
-    if (!rst_n) begin
-        bit_counter <= 3'b000;
-    end
-    else if(test_start && scl_test_rising_edge) begin
-        if(bit_counter == 3'b111) begin
-            bit_counter <= 3'b000;
+    // generate scl_i
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scl_i <= 1'b1;
         end
         else begin
-            bit_counter <= bit_counter + 1;
+            if (counter < (clk_divisor / 2)) begin
+                scl_i <= 1'b1;
+            end
+            else begin
+                scl_i <= 1'b0;
+            end
         end
     end
-    else begin
-        bit_counter <= bit_counter;
-    end
-end
 
-// enable_test
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        enable_test <= 1'b0;
-    end
-    else if (test_start && (bit_counter == 3'b0) && scl_test_rising_edge) begin
-        enable_test <= 1'b1;
-    end
-    else begin
-        enable_test <= 1'b0;
-    end
-end
-
-// load data to data shifter
-reg [(test_number * 8 - 1) : 0] data_to_write;
-reg [7:0] byte_write;
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        byte_write <= 8'b0;
-        data_to_write <= test_data_value;
-    end
-    else if(test_start && (bit_counter == 3'b0) && scl_test_falling_edge) begin
-        byte_write <= data_to_write[(test_number * 8 - 1) : (test_number * 8 - 8)];
-        data_to_write <= {data_to_write[(test_number * 8 - 9) : 0], 8'b0};
-    end
-    else begin
-        byte_write <= byte_write;
-        data_to_write <= data_to_write;
-    end
-end
-
-// write data to test module
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        sda_test <= 1'b1;
-    end
-    else if(test_start && (~scl_test)) begin
-        sda_test <= byte_write[7 - bit_counter];
-    end
-    else begin
-        sda_test <= sda_test;
-    end
-end
-
-// start test and check sda_test
-reg [7:0] byte_write_sync;
-always @(posedge clk or negedge rst_n) begin
-    byte_write_sync <= byte_write;
-end
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        current_test_count <= 32'b0;
-        error_count <= 1'b0;
-    end
-    else if(finish_test) begin
-        current_test_count <= current_test_count + 1;
-        if(data_test != byte_write_sync) begin
-            error_count <= error_count + 1;
-            $display("--%02d--FAIL-- write/read: %h/%h",
-                     current_test_count,
-                     byte_write_sync,
-                     data_test);
+    // detect scl rising and falling edge
+    reg scl_last;
+    wire scl_rise, scl_fall;
+    // save scl last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scl_last <= 1'b1;
         end
         else begin
-            error_count <= error_count;
-            $display("--%02d--PASS-- write/read: %h/%h",
-                     current_test_count,
-                     byte_write_sync,
-                     data_test);
+            scl_last <= scl_i;
         end
     end
-    else begin
-        current_test_count <= current_test_count;
-        error_count <= error_count;
-    end
-end
+    assign scl_rise = (~scl_last) && scl_i;
+    assign scl_fall = scl_last && (~scl_i);
 
-// generate prompt and log
-initial begin
-    test_start = 1'b0;
-    #20 test_start = 1'b1;
-    $display("******** 'slave_read_byte' module test started ********");
-    // wait till finished
-    wait(current_test_count == test_number);
-    test_start = 1'b0;
-    #500
-     $display("-------------------------------------------------");
-    if (error_count == 0) begin
-        $display("result: passed with %02d errors in %02d tests", error_count, test_number);
+    // test module to read 1 byte
+    reg [              2:0] bit_counter;
+    reg [              7:0] byte_written;
+    reg [test_number*8-1:0] data_to_write;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            bit_counter   <= 3'b0;
+            byte_written  <= 8'b0;
+            data_to_write <= data_test_value;
+            sda_i         <= 1'b1;
+            byte_read_en  <= 1'b0;
+        end
+        else if (test_start && scl_fall) begin
+            bit_counter  <= bit_counter + 1;
+            byte_written <= data_to_write[(test_number*8-1):(test_number*8-8)];
+            sda_i        <= data_to_write[(test_number*8-bit_counter-1)];
+            byte_read_en <= 1'b1;
+        end
+        else if (byte_read_finish) begin
+            bit_counter   <= 3'b0;
+            data_to_write <= {data_to_write[(test_number*8-9):0], 8'b0};
+            sda_i         <= sda_i;
+            byte_read_en  <= 1'b0;
+        end
     end
-    else begin
-        $display("result: failed with %02d errors in %02d tests", error_count, test_number);
+
+    // start test and generate prompt and log
+    initial begin
+        test_start = 1'b0;
+        error_cnt  = 0;
+
+        // test and check
+        $display("\n*********** 'slave_read_byte' module test started **********\n");
+        for (test_cnt = 0; test_cnt < test_number; test_cnt = test_cnt + 1) begin
+            #200 test_start = 1'b1;
+            wait (byte_read_finish);
+            test_start = 1'b0;
+            wait (~byte_read_finish);
+            // check read and written data
+            if (byte_read_o != byte_written) begin
+                error_cnt <= error_cnt + 1;
+                $display("++%02d++FAIL++ write/read: %b/%b", test_cnt, byte_written,
+                         byte_read_o);
+            end
+            else begin
+                $display("--%02d--PASS-- write/read: %b/%b", test_cnt, byte_written,
+                         byte_read_o);
+                error_cnt <= error_cnt;
+            end
+        end
+        $display("------------------------------------------------------------");
+
+        // result
+        if (error_cnt == 0) begin
+            $display("result: passed with 0 errors in %02d tests", test_number);
+        end
+        else begin
+            $display("result: failed with %02d errors in %02d tests", error_cnt,
+                     test_number);
+        end
+        $display("\n********** 'slave_read_byte' module test finished **********\n");
+        $finish;
     end
-    $display("******** 'slave_read_byte' module test finished ********");
-    $finish;
-end
 
 endmodule

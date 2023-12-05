@@ -1,462 +1,402 @@
 module I2C_slave (
-           input clock,
-           input reset_n,
-           input enable,                // enable signal
-           input [6: 0] address,        // set module address
-           input [7: 0] data_write,     // data write to I2C bus
-           output [7: 0] data_read,     // data read from I2C bus
-           output reg read_write_flag,  // 1 for read, 0 for write
-           output reg data_finish,      // data reading/writing finished
-           output reg transfer_status,  // transfer status, 1 for transfer in process
-           output reg bus_status,       // I2C bus status, 1 for bus busy
-           output reg error,            // error signal
-           input scl_in,
-           output scl_out,
-           input sda_in,
-           output sda_out);
+    input            clk,
+    input            rst_n,
+    input            slave_en,
+    input      [6:0] slave_addr,
+    input      [7:0] byte_write_i,     // 1-byte data write to I2C bus
+    output     [7:0] byte_read_o,      // 1-byte data read from I2C bus
+    output reg       read_write_flag,  // 1 for read, 0 for write
+    output reg       byte_finish,
+    output reg       transmit_busy,
+    output reg       transmit_err,
+    input            scl_i,
+    output           scl_o,
+    input            sda_i,
+    output           sda_o
+);
 
-// instantiate submodules
-// submodule to write 1 byte
-reg write_enable;
-wire write_finish, write_sda;
-I2C_slave_write_byte write_byte(
-                         .clock(clock),
-                         .reset_n(reset_n),
-                         .enable(write_enable),
-                         .data(data_write),
-                         .finish(write_finish),
-                         .scl(scl_in),
-                         .sda(write_sda));
+    // instantiate submodule to write 1 byte
+    reg write_en;
+    wire write_finish, write_sda_o;
+    I2C_slave_write_byte write_byte (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .byte_write_en    (write_en),
+        .byte_write_i     (byte_write_i),
+        .byte_write_finish(write_finish),
+        .scl_i            (scl_i),
+        .sda_o            (write_sda_o)
+    );
 
-// submodule to write ACK/NACK
-reg ack_enable, ack_data;
-wire ack_finish, ack_sda;
-I2C_slave_write_bit write_ack(
-                        .clock(clock),
-                        .reset_n(reset_n),
-                        .enable(ack_enable),
-                        .data(ack_data),
-                        .finish(ack_finish),
-                        .scl(scl_in),
-                        .sda(ack_sda)
-                    );
+    // instantiate submodule to write ACK
+    reg ack_en;
+    wire ack_finish, ack_sda_o;
+    I2C_slave_write_bit write_ack (
+        .clk             (clk),
+        .rst_n           (rst_n),
+        .bit_write_en    (ack_en),
+        .bit_write_i     (1'b1),
+        .bit_write_finish(ack_finish),
+        .scl_i           (scl_i),
+        .sda_o           (ack_sda_o)
+    );
 
-// sda_out
-assign sda_out = ack_enable ? ack_sda : write_sda;
+    // instantiate submodule to read 1 byte
+    reg read_en;
+    wire read_err, read_finish;
+    I2C_slave_read_byte read_byte (
+        .clk             (clk),
+        .rst_n           (rst_n),
+        .byte_read_en    (read_en),
+        .byte_read_o     (byte_read_o),
+        .byte_read_err   (read_err),
+        .byte_read_finish(read_finish),
+        .scl_i           (scl_i),
+        .sda_i           (sda_i)
+    );
 
-// submodule to read 1 byte
-reg read_enable;
-wire read_finish, read_error;
-I2C_slave_read_byte read_byte(
-                        .clock(clock),
-                        .reset_n(reset_n),
-                        .enable(read_enable),
-                        .data(data_read),
-                        .error(read_error),
-                        .finish(read_finish),
-                        .scl(scl_in),
-                        .sda(sda_in));
+    // instantiate submodule to check ACK/NACK
+    reg check_en;
+    wire check_read_o, check_err, check_finish;
+    wire get_ack;
+    assign get_ack = check_finish && (~check_read_o) && (~check_err);
+    I2C_slave_read_bit check_ACK (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .bit_read_en    (check_en),
+        .bit_read_o     (check_read_o),
+        .bit_read_err   (check_err),
+        .bit_read_finish(check_finish),
+        .scl_i          (scl_i),
+        .sda_i          (sda_i)
+    );
 
-// submodule to check ACK/NACK
-reg check_enable;
-wire check_data, check_error, check_finish;
-wire get_ack;
-assign get_ack = check_finish && (~check_data) && (~check_error);
-I2C_slave_read_bit check_ACK(
-                       .clock(clock),
-                       .reset_n(reset_n),
-                       .enable(check_enable),
-                       .data(check_data),
-                       .error(check_error),
-                       .finish(check_finish),
-                       .scl(scl_in),
-                       .sda(sda_in));
-
-// detect sda falling and rising edge
-reg sda_last_state;
-wire sda_rising_edge, sda_falling_edge;
-// save sda last state
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        sda_last_state <= 1'b1;
-    end
-    else begin
-        sda_last_state <= sda_in;
-    end
-end
-// sda falling edge: 1 -> 0
-assign sda_falling_edge = sda_last_state && (~sda_in);
-// sda rising edge: 0 -> 1
-assign sda_rising_edge = (~sda_last_state) && sda_in;
-
-// check start and stop conditons
-wire start, stop;
-// start: scl high, sda 1 -> 0
-assign start = scl_in && sda_falling_edge;
-// stop: scl high, sda 0 -> 1
-assign stop = scl_in && sda_rising_edge;
-
-// detect scl falling and rising edge
-reg scl_last_state;
-wire scl_rising_edge, scl_falling_edge;
-// save scl last state
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        scl_last_state <= 1'b1;
-    end
-    else begin
-        scl_last_state <= scl_in;
-    end
-end
-// scl falling edge: 1 -> 0
-assign scl_falling_edge = scl_last_state && (~scl_in);
-// scl rising edge: 0 -> 1
-assign scl_rising_edge = (~scl_last_state) && scl_in;
-
-// finite state machine
-// state encode
-parameter IDLE = 10'h000;
-parameter GET_START = 10'h001;
-
-parameter READ_ADDRESS = 10'h002;
-parameter WRITE_ADDRESS_ACK = 10'h004;
-
-parameter WAIT_TO_READ = 10'h008;
-parameter READ_DATA = 10'h010;
-parameter WRITE_DATA_ACK = 10'h020;
-
-parameter WRITE_DATA = 10'h040;
-parameter WAIT_TO_CHECK = 10'h080;
-parameter CHECK_DATA_ACK = 10'h100;
-
-parameter WAIT = 10'h200;
-
-// state varibele
-reg [9: 0] state_next;
-reg [9: 0] state_current;
-
-// state transfer, sequential circuit
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n)
-        state_current <= IDLE;
-    else
-        state_current <= state_next;
-end
-
-// state switch, combinational circuit
-always @(*) begin
-    case (state_current)
-        IDLE: begin
-            if (enable && start) begin
-                state_next = GET_START;
-            end
-            else begin
-                state_next = IDLE;
-            end
+    // detect sda_i falling and rising edge
+    reg sda_last;
+    wire sda_rise, sda_fall;
+    // save sda_i last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sda_last <= 1'b1;
         end
-        GET_START: begin
-            if(scl_rising_edge) begin
-                state_next = READ_ADDRESS;
-            end
-            else begin
-                state_next = GET_START;
-            end
+        else begin
+            sda_last <= sda_i;
         end
-        READ_ADDRESS: begin
-            if (read_finish) begin
-                state_next = WRITE_ADDRESS_ACK;
-            end
-            else begin
-                state_next = READ_ADDRESS;
-            end
+    end
+    // sda_i falling edge: 1 -> 0
+    assign sda_fall = sda_last && (~sda_i);
+    // sda_i rising edge: 0 -> 1
+    assign sda_rise = (~sda_last) && sda_i;
+
+    // detect start and stop conditions
+    wire start, stop;
+    // start: scl high, sda_i 1 -> 0
+    assign start = scl_i && sda_fall;
+    // stop: scl high, sda_i 0 -> 1
+    assign stop  = scl_i && sda_rise;
+
+    // detect scl_i falling edge
+    reg  scl_last;
+    wire scl_fall;
+    // save scl_i last state
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scl_last <= 1'b1;
         end
-        WRITE_ADDRESS_ACK: begin
-            if (scl_falling_edge) begin
-                if (data_read[7:1] == address) begin
-                    if (data_read[0]) begin
-                        state_next = WAIT_TO_READ;
+        else begin
+            scl_last <= scl_i;
+        end
+    end
+    // scl_i falling edge: 0 -> 1
+    assign scl_fall = scl_last && (~scl_i);
+
+    // finite state machine
+    // state encode
+    parameter IDLE = 8'h00;
+    parameter GET_START = 8'h01;
+
+    parameter READ_ADDRESS = 8'h02;
+    parameter WRITE_ADDRESS_ACK = 8'h04;
+
+    parameter READ_DATA = 8'h08;
+    parameter WRITE_DATA_ACK = 8'h10;
+
+    parameter WRITE_DATA = 8'h20;
+    parameter CHECK_DATA_ACK = 8'h40;
+
+    parameter WAIT = 8'h80;
+
+    // state variable
+    reg [7:0] state_next;
+    reg [7:0] state_current;
+
+    // state transfer, sequential circuit
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state_current <= IDLE;
+        end
+        else begin
+            state_current <= state_next;
+        end
+    end
+
+    // state switch, combinational circuit
+    always @(*) begin
+        case (state_current)
+            IDLE: begin
+                if (slave_en && start) begin
+                    state_next = GET_START;
+                end
+                else begin
+                    state_next = IDLE;
+                end
+            end
+            GET_START: begin
+                if (scl_fall) begin
+                    state_next = READ_ADDRESS;
+                end
+                else begin
+                    state_next = GET_START;
+                end
+            end
+            READ_ADDRESS: begin
+                if (read_finish) begin
+                    if (byte_read_o[7:1] == slave_addr) begin
+                        state_next = WRITE_ADDRESS_ACK;
+                    end
+                    else begin
+                        state_next = WAIT;
+                    end
+                end
+                else begin
+                    state_next = READ_ADDRESS;
+                end
+            end
+            WRITE_ADDRESS_ACK: begin
+                if (ack_finish) begin
+                    if (byte_read_o[0]) begin
+                        state_next = READ_DATA;
                     end
                     else begin
                         state_next = WRITE_DATA;
                     end
                 end
                 else begin
-                    state_next = WAIT;
+                    state_next = WRITE_ADDRESS_ACK;
                 end
-            end
-            else begin
-                state_next = WRITE_ADDRESS_ACK;
-            end
-        end
-        WAIT_TO_READ: begin
-            if (scl_rising_edge) begin
-                state_next = READ_DATA;
-            end
-            else begin
-                state_next = WAIT_TO_READ;
-            end
-        end
-        READ_DATA: begin
-            if (start) begin
-                state_next = GET_START;
-            end
-            else if (stop) begin
-                state_next = IDLE;
-            end
-            else if (read_finish) begin
-                state_next = WRITE_DATA_ACK;
-            end
-            else
-                state_next = READ_DATA;
-        end
-        WRITE_DATA_ACK: begin
-            if(scl_falling_edge) begin
-                state_next = WAIT_TO_READ;
-            end
-            else begin
-                state_next = WRITE_DATA_ACK;
-            end
-        end
-        WRITE_DATA: begin
-            if (write_finish)
-                state_next = WAIT_TO_CHECK;
-            else
-                state_next = WRITE_DATA;
-        end
-        WAIT_TO_CHECK: begin
-            if (scl_rising_edge) begin
-                state_next = CHECK_DATA_ACK;
-            end
-            else begin
-                state_next = WAIT_TO_CHECK;
-            end
-        end
-        CHECK_DATA_ACK: begin
-            if(check_finish) begin
-                if(get_ack) begin
-                    state_next = WRITE_DATA;
-                end
-                else begin
-                    state_next = WAIT;
-                end
-            end
-            else begin
-                state_next = CHECK_DATA_ACK;
-            end
-        end
-        WAIT: begin
-            if (start) begin
-                state_next = GET_START;
-            end
-            else if(stop) begin
-                state_next = IDLE;
-            end
-            else begin
-                state_next = WAIT;
-            end
-        end
-        default: begin
-            state_next = IDLE;
-        end
-    endcase
-end
-
-// outputs
-// signal to control submodules, combinational circuit
-always @(*) begin
-    if (!reset_n) begin
-        {write_enable, ack_enable, read_enable, check_enable} = 4'b0000;
-        ack_data = 1'b0;
-    end
-    else begin
-        case (state_current)
-            IDLE: begin
-                {write_enable, ack_enable, read_enable, check_enable} = 4'b0000;
-                ack_data = 1'b0;
-            end
-            GET_START: begin
-                if (scl_rising_edge) begin
-                    read_enable = 1'b1;
-                end
-                else begin
-                    read_enable = 1'b0;
-                end
-                {write_enable, ack_enable, check_enable} = 3'b000;
-                ack_data = 1'b0;
-            end
-            READ_ADDRESS: begin
-                if (read_finish) begin
-                    if (data_read[7:1] == address) begin
-                        ack_enable = 1'b1;
-                        ack_data = 1'b0;
-                    end
-                    else begin
-                        ack_enable = 1'b1;
-                        ack_data = 1'b1;
-                    end
-                end
-                else begin
-                    ack_enable = 1'b0;
-                    ack_data = 1'b0;
-                end
-                {write_enable, read_enable, check_enable} = 3'b000;
-            end
-            WRITE_ADDRESS_ACK: begin
-                if (scl_falling_edge) begin
-                    if (data_read[0]) begin
-                        {write_enable, ack_enable, read_enable, check_enable} = 4'b0100;
-                    end
-                    else begin
-                        {write_enable, ack_enable, read_enable, check_enable} = 4'b1000;
-                    end
-                end
-                else begin
-                    {write_enable, ack_enable, read_enable, check_enable} = 4'b0100;
-                end
-                ack_data = 1'b0;
-            end
-            WAIT_TO_READ: begin
-                if (scl_rising_edge) begin
-                    read_enable = 1'b1;
-                end
-                else begin
-                    read_enable = 1'b0;
-                end
-                {write_enable, ack_enable, check_enable} = 3'b000;
-                ack_data = 1'b0;
             end
             READ_DATA: begin
-                if (read_finish) begin
-                    ack_enable = 1'b1;
-                    ack_data = read_error;
+                if (start) begin
+                    state_next = GET_START;
+                end
+                else if (stop) begin
+                    state_next = IDLE;
+                end
+                else if (read_finish) begin
+                    state_next = WRITE_DATA_ACK;
                 end
                 else begin
-                    ack_enable = 1'b0;
-                    ack_data = 1'b0;
+                    state_next = READ_DATA;
                 end
-                {write_enable, read_enable, check_enable} = 3'b000;
             end
             WRITE_DATA_ACK: begin
-                if(scl_falling_edge) begin
-                    {write_enable, ack_enable, read_enable, check_enable} = 4'b0000;
+                if (ack_finish) begin
+                    state_next = READ_DATA;
                 end
                 else begin
-                    {write_enable, ack_enable, read_enable, check_enable} = 4'b0100;
+                    state_next = WRITE_DATA_ACK;
                 end
-                ack_data = 1'b0;
             end
             WRITE_DATA: begin
-                {write_enable, ack_enable, read_enable, check_enable} = 4'b0000;
-                ack_data = 1'b0;
-            end
-            WAIT_TO_CHECK: begin
-                if (scl_rising_edge) begin
-                    check_enable = 1'b1;
+                if (write_finish) begin
+                    state_next = CHECK_DATA_ACK;
                 end
                 else begin
-                    check_enable = 1'b0;
+                    state_next = WRITE_DATA;
                 end
-                {write_enable, ack_enable, read_enable} = 3'b000;
-                ack_data = 1'b0;
             end
             CHECK_DATA_ACK: begin
-                if (check_finish && get_ack) begin
-                    write_enable = 1'b1;
+                if (check_finish) begin
+                    if (get_ack) begin
+                        state_next = WRITE_DATA;
+                    end
+                    else begin
+                        state_next = WAIT;
+                    end
                 end
                 else begin
-                    write_enable = 1'b0;
+                    state_next = CHECK_DATA_ACK;
                 end
-                {ack_enable, read_enable, check_enable} = 4'b0000;
-                ack_data = 1'b0;
             end
             WAIT: begin
-                {write_enable, ack_enable, read_enable, check_enable} = 4'b0000;
-                ack_data = 1'b0;
+                if (start) begin
+                    state_next = GET_START;
+                end
+                else if (stop) begin
+                    state_next = IDLE;
+                end
+                else begin
+                    state_next = WAIT;
+                end
             end
             default: begin
-                {write_enable, ack_enable, read_enable, check_enable} = 4'b0000;
-                ack_data = 1'b0;
+                state_next = IDLE;
             end
         endcase
     end
-end
 
-// external outputs
-// generate read_write_flag
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        read_write_flag <= 1'b0;
+    // output signal to control submodules, combinational circuit
+    always @(*) begin
+        if (!rst_n) begin
+            {read_en, ack_en, write_en, check_en} = 4'b0000;
+        end
+        else begin
+            case (state_current)
+                IDLE: begin
+                    {read_en, ack_en, write_en, check_en} = 4'b0000;
+                end
+                GET_START: begin
+                    if (scl_fall) begin
+                        {read_en, ack_en, write_en, check_en} = 4'b1000;
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0000;
+                    end
+                end
+                READ_ADDRESS: begin
+                    if (read_finish) begin
+                        if (byte_read_o[7:1] == slave_addr) begin
+                            {read_en, ack_en, write_en, check_en} = 4'b0100;
+                        end
+                        else begin
+                            {read_en, ack_en, write_en, check_en} = 4'b0000;
+                        end
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b1000;
+                    end
+                end
+                WRITE_ADDRESS_ACK: begin
+                    if (ack_finish) begin
+                        if (byte_read_o[0]) begin
+                            {read_en, ack_en, write_en, check_en} = 4'b1000;
+                        end
+                        else begin
+                            {read_en, ack_en, write_en, check_en} = 4'b0010;
+                        end
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0100;
+                    end
+                end
+                READ_DATA: begin
+                    if (start) begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0000;
+                    end
+                    else if (stop) begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0000;
+                    end
+                    else if (read_finish) begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0100;
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b1000;
+                    end
+                end
+                WRITE_DATA_ACK: begin
+                    if (ack_finish) begin
+                        {read_en, ack_en, write_en, check_en} = 4'b1000;
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0100;
+                    end
+                end
+                WRITE_DATA: begin
+                    if (write_finish) begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0001;
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0010;
+                    end
+                end
+                CHECK_DATA_ACK: begin
+                    if (check_finish) begin
+                        if (get_ack) begin
+                            {read_en, ack_en, write_en, check_en} = 4'b0010;
+                        end
+                        else begin
+                            {read_en, ack_en, write_en, check_en} = 4'b0000;
+                        end
+                    end
+                    else begin
+                        {read_en, ack_en, write_en, check_en} = 4'b0001;
+                    end
+                end
+                WAIT: begin
+                    {read_en, ack_en, write_en, check_en} = 4'b0000;
+                end
+                default: begin
+                    {read_en, ack_en, write_en, check_en} = 4'b0000;
+                end
+            endcase
+        end
     end
-    else if (read_finish && (state_current == READ_ADDRESS)) begin
-        read_write_flag <= data_read[0];
-    end
-    else begin
-        read_write_flag <= read_write_flag;
-    end
-end
-// generate bus_status, 1 for bus busy, 0 for free
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        bus_status <= 1'b0;
-    end
-    else if (start) begin
-        bus_status <= 1'b1;
-    end
-    else if (stop) begin
-        bus_status <= 1'b0;
-    end
-    else begin
-        bus_status <= bus_status;
-    end
-end
-// generate data_finish
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        data_finish <= 1'b0;
-    end
-    else if (read_finish && (state_current == READ_DATA)) begin
-        data_finish <= 1'b1;
-    end
-    else if (write_finish && (state_current == WRITE_DATA)) begin
-        data_finish <= 1'b1;
-    end
-    else begin
-        data_finish <= 1'b0;
-    end
-end
-// generate transfer_status
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        transfer_status <= 1'b0;
-    end
-    else begin
+
+    // external outputs
+    // sda_o
+    assign sda_o = ack_en ? ack_sda_o : write_sda_o;
+
+    // read_write_flag
+    always @(*) begin
         case (state_current)
-            IDLE, GET_START, WAIT: begin
-                transfer_status <= 1'b0;
+            IDLE, GET_START, READ_ADDRESS, WRITE_ADDRESS_ACK, WAIT: begin
+                read_write_flag = 1'b0;
             end
-            WRITE_ADDRESS_ACK: begin
-                transfer_status <= 1'b1;
+            READ_DATA, WRITE_DATA_ACK: begin
+                read_write_flag = 1'b1;
+            end
+            WRITE_DATA, CHECK_DATA_ACK: begin
+                read_write_flag = 1'b1;
             end
             default: begin
-                transfer_status <= transfer_status;
+                read_write_flag = 1'b0;
             end
         endcase
     end
-end
-// generate error
-always @(posedge clock or negedge reset_n) begin
-    if (!reset_n) begin
-        error <= 1'b0;
+
+    // byte_finish
+    always @(*) begin
+        case (state_current)
+            READ_DATA: begin
+                byte_finish = read_finish;
+            end
+            WRITE_DATA: begin
+                byte_finish = write_finish;
+            end
+            default: begin
+                byte_finish = 1'b0;
+            end
+        endcase
     end
-    else if (start) begin
-        error <= 1'b0;
+
+    // transmit_busy
+    always @(*) begin
+        case (state_current)
+            IDLE, GET_START, READ_ADDRESS, WRITE_ADDRESS_ACK, WAIT: begin
+                transmit_busy = 1'b0;
+            end
+            READ_DATA, WRITE_DATA_ACK, WRITE_DATA, CHECK_DATA_ACK: begin
+                transmit_busy = 1'b1;
+            end
+            default: begin
+                transmit_busy = 1'b0;
+            end
+        endcase
     end
-    else if ((state_current == READ_DATA) && read_error) begin
-        error <= 1'b1;
+
+    // transmit_err
+    always @(*) begin
+        transmit_err = read_err;
     end
-    else begin
-        error <= error;
-    end
-end
 
 endmodule

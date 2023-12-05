@@ -35,7 +35,7 @@ module I2C_slave (
         .clk             (clk),
         .rst_n           (rst_n),
         .bit_write_en    (ack_en),
-        .bit_write_i     (1'b1),
+        .bit_write_i     (1'b0),
         .bit_write_finish(ack_finish),
         .scl_i           (scl_i),
         .sda_o           (ack_sda_o)
@@ -344,7 +344,7 @@ module I2C_slave (
 
     // external outputs
     // sda_o
-    assign sda_o = ack_en ? ack_sda_o : write_sda_o;
+    assign sda_o = ack_en ? ack_sda_o : (write_en ? write_sda_o : 1'b1);
 
     // read_write_flag
     always @(*) begin
@@ -356,7 +356,7 @@ module I2C_slave (
                 read_write_flag = 1'b1;
             end
             WRITE_DATA, CHECK_DATA_ACK: begin
-                read_write_flag = 1'b1;
+                read_write_flag = 1'b0;
             end
             default: begin
                 read_write_flag = 1'b0;
@@ -367,11 +367,11 @@ module I2C_slave (
     // byte_finish
     always @(*) begin
         case (state_current)
-            READ_DATA: begin
-                byte_finish = read_finish;
+            WRITE_DATA_ACK: begin
+                byte_finish = ack_finish;
             end
-            WRITE_DATA: begin
-                byte_finish = write_finish;
+            CHECK_DATA_ACK: begin
+                byte_finish = check_finish;
             end
             default: begin
                 byte_finish = 1'b0;

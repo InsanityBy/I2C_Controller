@@ -4,7 +4,7 @@
  *
  * file name: clock_divisor.v
  * create date: 2023.12.09
- * last modified date: 2023.12.09
+ * last modified date: 2023.12.11
  *
  * design name: I2C_controller
  * module name: clock_divisor
@@ -17,14 +17,19 @@
  * revision:
  * V1.0 - 2023.12.09
  *     initial version
+ * V1.1 - 2023.12.11
+ *     group module inputs and outputs
  */
 
 module clock_divisor (
     input clk_i,
     input rst_n,
+    // control
     input clk_en,
     input [3:0] clk_div,  // 0~15, f_{clk_o} = f_{clk_i}/(2*(clk_div+1))
+    // status
     output reg [3:0] clk_div_cur,  // current clk_div value
+    // clock output
     output reg clk_o
 );
 

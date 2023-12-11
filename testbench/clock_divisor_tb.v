@@ -11,8 +11,8 @@ module testbench ();
         .clk_i      (clk),
         .rst_n      (rst_n),
         .clk_en     (clk_en),
-        .clk_div    (clk_div),
-        .clk_div_cur(clk_div_cur),
+        .set_clk_div(clk_div),
+        .clk_div    (clk_div_cur),
         .clk_o      (clk_o)
     );
 

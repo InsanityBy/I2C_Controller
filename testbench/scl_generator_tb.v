@@ -14,8 +14,8 @@ module testbench ();
         .rst_n        (rst_n),
         .scl_en       (scl_en),
         .scl_wait     (scl_wait),
-        .scl_div      (scl_div),
-        .scl_div_cur  (scl_div_cur),
+        .set_scl_div  (scl_div),
+        .scl_div      (scl_div_cur),
         .scl_stretched(scl_stretched),
         .scl_i        (scl),
         .scl_o        (scl_o)

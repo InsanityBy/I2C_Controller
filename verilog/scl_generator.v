@@ -4,7 +4,7 @@
  *
  * file name: scl_generator.v
  * create date: 2023.12.09
- * last modified date: 2023.12.11
+ * last modified date: 2023.12.12
  *
  * design name: I2C_controller
  * module name: scl_generator
@@ -17,6 +17,8 @@
  * revision:
  * V1.0 - 2023.12.11
  *     initial version
+ * V1.1 - 2023.12.12
+ *     rename signals
  */
 
 module scl_generator (
@@ -25,9 +27,9 @@ module scl_generator (
     // control
     input scl_en,
     input scl_wait,  // stretch scl to wait, can ONLY be set when scl low
-    input [7:0] scl_div,  // 1~255, f_{scl_o} = f_{clk}/(2*(scl_div+1))
+    input [7:0] set_scl_div,  // 1~255, f_{scl_o} = f_{clk}/(2*(scl_div+1))
     // status
-    output reg [7:0] scl_div_cur,  // current scl_div value
+    output reg [7:0] scl_div,  // current scl_div value
     output reg scl_stretched,
     // I2C
     input scl_i,
@@ -37,18 +39,18 @@ module scl_generator (
     // set scl divisor
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            scl_div_cur <= 8'h01;
+            scl_div <= 8'h01;
         end
         else if (!scl_en) begin  // scl_div can ONLY be set when module disabled
-            if (scl_div == 8'b0) begin
-                scl_div_cur <= 8'h01;
+            if (set_scl_div == 8'b0) begin
+                scl_div <= 8'h01;
             end
             else begin
-                scl_div_cur <= scl_div;
+                scl_div <= set_scl_div;
             end
         end
         else begin
-            scl_div_cur <= scl_div_cur;
+            scl_div <= scl_div;
         end
     end
 
@@ -64,10 +66,10 @@ module scl_generator (
         else if (scl_wait || scl_stretched) begin  // stop to wait
             scl_cnt <= scl_cnt;
         end
-        else if (scl_cnt == {1'b0, scl_div_cur}) begin  // scl_o falls
+        else if (scl_cnt == {1'b0, scl_div}) begin  // scl_o falls
             scl_cnt <= 9'h100;
         end
-        else if (scl_cnt == {1'b1, scl_div_cur}) begin  // scl_o rises
+        else if (scl_cnt == {1'b1, scl_div}) begin  // scl_o rises
             scl_cnt <= 9'b0;
         end
         else begin

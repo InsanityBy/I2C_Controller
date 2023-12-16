@@ -2,14 +2,14 @@
  * company: Peking University
  * author: insanity_by@pku.edu.cn
  *
- * file name: I2C_slave_read.v
+ * file name: I2C_read.v
  * create date: 2023.12.11
  * last modified date: 2023.12.17
  *
  * design name: I2C_controller
- * module name: I2C_slave_read
+ * module name: I2C_read
  * description:
- *     combine slave_read_bit and slave_read_byte, and add more control and status signals
+ *     module for reading 1-bit or 1-byte data, supports both master and slave
  * dependencies:
  *     (none)
  *
@@ -18,9 +18,11 @@
  *     initial version
  * V1.1 - 2023.12.17
  *     fix: timing issues of signals
+ * V1.2 - 2023.12.17
+ *     feature: support both master and slave
  */
 
-module I2C_slave_read (
+module I2C_read (
     // clock and reset
     input clk,
     input rst_n,

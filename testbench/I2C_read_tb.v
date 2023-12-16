@@ -32,7 +32,7 @@ module testbench ();
     reg scl_i, sda_i;
 
     // instantiate the module under test
-    I2C_slave_read test_module (
+    I2C_read test_module (
         .clk      (clk),
         .rst_n    (rst_n),
         .rd_en    (rd_en),

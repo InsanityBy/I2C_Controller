@@ -21,14 +21,14 @@ module testbench ();
 
     // test parameters
     parameter test_round = 32;
-    parameter scl_div = 4;
+    parameter scl_div = 8;
     parameter clk_period = 20;
     parameter scl_period = clk_period * scl_div;
 
     // signals
     reg clk, rst_n;
     reg rd_en, is_byte;
-    wire rd_ld, data_o, rd_finish, get_start, get_stop, rd_err;
+    wire rd_ld, data_o, rd_finish, get_start, get_stop, bus_err;
     reg scl_i, sda_i;
 
     // instantiate the module under test
@@ -42,7 +42,7 @@ module testbench ();
         .rd_finish(rd_finish),
         .get_start(get_start),
         .get_stop (get_stop),
-        .rd_err   (rd_err),
+        .bus_err  (bus_err),
         .scl_i    (scl_i),
         .sda_i    (sda_i)
     );
@@ -56,75 +56,82 @@ module testbench ();
         forever #(clk_period / 2) clk = ~clk;
     end
 
-    // task: write 1-bit data to test
+    // task: write 1-bit data
     task write_bit;
         input data;
         input insert_err;
+        integer i;
+        begin
+            i = 0;
+            repeat (scl_div)
+            @(posedge clk) begin
+                if (i == 0) begin  // scl falls
+                    #1 scl_i = 1'b0;
+                end
+                if (i == 1) begin
+                    #1 sda_i = data;  // write data 1 clock after scl falls
+                    #1 rd_en = 1'b1;  // enable module 1 clock after scl falls
+                end
+                if (i == scl_div / 2) begin  // scl rises
+                    #1 scl_i = 1'b1;
+                end
+                if (i == scl_div / 2 + 1) begin  // insert bus error
+                    if (insert_err) begin
+                        #1 sda_i = ~sda_i;
+                    end
+                end
+                i = i + 1;
+            end
+        end
+    endtask
+
+    // task: write 1-bit data to test
+    task write_bit_test;
+        input data;
+        input insert_err;
+        integer i;
         begin
             // initial
-            scl_i = 1'b1;
-            sda_i = 1'b1;
-            #scl_period;
+            scl_i   = 1'b1;
+            sda_i   = 1'b1;
             rd_en   = 1'b0;
             is_byte = 1'b0;
+            #clk_period;
             // write
-            scl_i   = 1'b0;
-            #clk_period rd_en = 1'b1;  // enable 1 clock after scl falls
-            #(scl_period / 4 - clk_period) sda_i = data;
-            #(scl_period / 4) scl_i = 1'b1;
-            #(scl_period / 4) scl_i = 1'b1;
-            if (insert_err) begin
-                sda_i = ~sda_i;
-            end
-            #(scl_period / 4) scl_i = 1'b0;
+            write_bit(data, insert_err);
+            @(posedge clk) #1 scl_i = 1'b0;  // scl falls
             // wait finish
             wait (rd_finish);
-            wait (~rd_finish);
-            rd_en = 1'b0;
+            #(clk_period + 1) rd_en = 1'b0;
         end
     endtask
 
     // task: write 1-byte data to test
-    task write_byte;
+    task write_byte_test;
         input [7:0] data;
         input insert_err;
         input [2:0] err_pos;
         integer i;
         begin
             // initial
-            scl_i = 1'b1;
-            sda_i = 1'b1;
-            #scl_period;
+            scl_i   = 1'b1;
+            sda_i   = 1'b1;
             rd_en   = 1'b0;
             is_byte = 1'b1;
+            #clk_period;
             //write
             for (i = 0; i < 8; i = i + 1) begin
-                if (i == 0) begin
-                    scl_i = 1'b0;
-                    #clk_period rd_en = 1'b1;  // enable 1 clock after scl falls
-                    #(scl_period / 4 - clk_period) sda_i = data[7-i];
-                    #(scl_period / 4) scl_i = 1'b1;
-                    #(scl_period / 4) scl_i = 1'b1;
-                    if (insert_err && (i == err_pos)) begin
-                        sda_i = ~sda_i;
-                    end
-                    #(scl_period / 4) scl_i = 1'b0;
+                if (i == err_pos) begin
+                    write_bit(data[7-i], insert_err);
                 end
                 else begin
-                    scl_i = 1'b0;
-                    #(scl_period / 4) sda_i = data[7-i];
-                    #(scl_period / 4) scl_i = 1'b1;
-                    #(scl_period / 4) scl_i = 1'b1;
-                    if (insert_err && (i == err_pos)) begin
-                        sda_i = ~sda_i;
-                    end
-                    #(scl_period / 4) scl_i = 1'b0;
+                    write_bit(data[7-i], 1'b0);
                 end
             end
+            @(posedge clk) #1 scl_i = 1'b0;  // scl falls
             // wait finish
             wait (rd_finish);
-            wait (~rd_finish);
-            rd_en = 1'b0;
+            #(clk_period + 1) rd_en = 1'b0;
         end
     endtask
 
@@ -146,34 +153,31 @@ module testbench ();
     initial begin
         test_cnt = 0;
         err_cnt  = 0;
-
         $display("\n******************** module test started *******************\n");
-        rd_en   = 1'b0;
-        is_byte = 1'b0;
         for (test_cnt = 1; test_cnt <= test_round; test_cnt = test_cnt + 1) begin
             $display("round %02d/%02d", test_cnt, test_round);
             // random data to write
             data = $random % 256;
             // test read bit
             $display("write bit: %b", data[0]);
-            write_bit(data[0], 1'b0);
+            write_bit_test(data[0], 1'b0);
             if (shifter[0] != data[0]) begin
                 $display("read bit error\n");
                 err_cnt = err_cnt + 1;
             end
             // test read bit insert error
-            write_bit(data[0], 1'b1);
+            write_bit_test(data[0], 1'b1);
 
             // test read byte
             $display("write byte: %b", data);
-            write_byte(data, 1'b0, 3'b000);
+            write_byte_test(data, 1'b0, 3'b000);
             if (shifter != data) begin
                 $display("read byte error\n");
                 err_cnt = err_cnt + 1;
             end
             // test read byte insert error at different position
             for (integer i = 0; i < 8; i = i + 1) begin
-                write_byte(data, 1'b1, i);
+                write_byte_test(data, 1'b1, i);
             end
             $display("------------------------------------------------------------");
         end

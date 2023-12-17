@@ -27,18 +27,20 @@ module testbench ();
 
     // signals
     reg clk, rst_n;
-    reg wr_en, is_byte, data_i;
+    reg wr_en, is_data, is_byte, command_i, data_i;
     wire wr_ld, data_o, wr_finish, wr_err, get_start, get_stop, bus_err;
     reg scl_i, sda_i, sda_ctrl;
     wire sda_o;
 
     // instantiate the module under test
-    I2C_slave_write test_module (
+    I2C_write test_module (
         .clk      (clk),
         .rst_n    (rst_n),
         .wr_en    (wr_en),
+        .is_data  (is_data),
         .is_byte  (is_byte),
         .wr_ld    (wr_ld),
+        .command_i(command_i),
         .data_i   (data_i),
         .data_o   (data_o),
         .wr_finish(wr_finish),
@@ -129,9 +131,11 @@ module testbench ();
             scl_i = 1'b1;
             sda_ctrl = 1'b1;
             wr_en = 1'b0;
+            is_data = 1'b1;
             is_byte = 1'b0;
+            command_i = 1'b0;
             shifter[7] = data_i;
-            #scl_period;
+            #clk_period;
             // read
             read_bit(data_i, data_o, insert_bus_err, insert_wr_err);
             @(posedge clk) #1 scl_i = 1'b0;  // scl falls
@@ -154,9 +158,11 @@ module testbench ();
             scl_i = 1'b1;
             sda_ctrl = 1'b1;
             wr_en = 1'b0;
+            is_data = 1'b1;
             is_byte = 1'b1;
+            command_i = 1'b0;
             shifter = data_i;
-            #scl_period;
+            #clk_period;
             // generate scl and read data from module
             for (i = 0; i < 8; i = i + 1) begin
                 if (i == err_pos) begin
@@ -165,6 +171,42 @@ module testbench ();
                 else begin
                     read_bit(data_i[7-i], data_o[7-i], 1'b0, 1'b0);
                 end
+            end
+            @(posedge clk) #1 scl_i = 1'b0;  // scl falls
+            // wait finish
+            wait (wr_finish);
+            #(clk_period + 1) wr_en = 1'b0;
+        end
+    endtask
+
+    // task: test write command
+    task write_command_test;
+        input command;
+        integer i;
+        begin
+            // initial
+            i = 0;
+            scl_i = 1'b1;
+            sda_ctrl = 1'b1;
+            wr_en = 1'b0;
+            is_data = 1'b0;
+            is_byte = 1'b0;
+            command_i = command;
+            shifter = 8'b0;
+            #clk_period;
+            // write
+            repeat (scl_div)
+            @(posedge clk) begin
+                if (i == 0) begin  // scl falls
+                    #1 scl_i = 1'b0;
+                end
+                if (i == 1) begin
+                    #1 wr_en = 1'b1;  // enable module 1 clock after scl falls
+                end
+                if (i == scl_div / 2) begin  // scl rises
+                    #1 scl_i = 1'b1;
+                end
+                i = i + 1;
             end
             @(posedge clk) #1 scl_i = 1'b0;  // scl falls
             // wait finish
@@ -187,28 +229,34 @@ module testbench ();
             $display("round %02d/%02d", test_cnt, test_round);
             // random data to write
             data = $random % 256;
-            // test read bit
+            // test write command
+            // start
+            write_command_test(1'b1);
+            //stop
+            write_command_test(1'b0);
+
+            // test write bit
             $display("write bit: %b", data[7]);
             read_bit_test(data[7], data_get[7], 1'b0, 1'b0);
             if (data_get[7] != data[7]) begin
                 $display("write bit error\n");
                 err_cnt = err_cnt + 1;
             end
-            // test read bit insert bus error
+            // test write bit insert bus error
             read_bit_test(data[7], data_get[7], 1'b1, 1'b0);
             // insert write error
             read_bit_test(data[7], data_get[7], 1'b0, 1'b1);
             // both error
             read_bit_test(data[7], data_get[7], 1'b1, 1'b1);
 
-            // test read byte
+            // test write byte
             $display("write byte: %b", data);
             read_byte_test(data, data_get, 1'b0, 1'b0, 3'b000);
             if (data_get != data) begin
-                $display("read byte error\n");
+                $display("write byte error\n");
                 err_cnt = err_cnt + 1;
             end
-            // test read byte insert error at different position
+            // test write byte insert error at different position
             for (integer i = 0; i < 8; i = i + 1) begin
                 // bus error
                 read_byte_test(data, data_get, 1'b1, 1'b0, i);

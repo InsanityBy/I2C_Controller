@@ -1,56 +1,6 @@
 `timescale 1ns / 10ps
 
 module testbench ();
-    reg clk, rst_n;
-    reg        slave_en;
-    reg  [7:0] byte_write_i;
-    wire [7:0] byte_read_o;
-    wire read_write_flag, byte_finish, transmit_busy, transmit_err;
-    reg scl_i, sda_i;
-    wire scl_o, sda_o;
-
-    // test parameters and variables
-    parameter slave_addr = 7'b101_1101;  // without read/write bit
-    parameter wrong_addr = 7'b110_0100;  // wrong address, without read/write bit
-    parameter data_test_value = 32'h13_57_9b_df;
-    parameter transmit_num = 4;  // transmit_num * 8 <= length of data_test_value
-    parameter clk_divisor = 4;  // period_of_SCL = clk_divisor * period_of_clk
-
-    integer test_ctrl;
-    parameter WRONG_ADDR = 0;
-    parameter SLAVE_READ = 1;
-    parameter SLAVE_WRITE = 2;
-    parameter SLAVE_COMBINED1 = 3;
-    parameter SLAVE_COMBINED2 = 4;
-    parameter SLAVE_COMBINED3 = 5;
-    integer ctrl_cnt;
-    parameter START = 0;
-    parameter ADDR = 1;
-    parameter TRANSMIT = ADDR + transmit_num;
-    parameter PRE_STOP = ADDR + transmit_num + 1;
-    parameter STOP = ADDR + transmit_num + 2;
-    reg           test_start;
-    reg     [3:0] bit_cnt;
-    integer       error_cnt;
-
-    // instantiate the submodule
-    I2C_slave test_module (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .slave_en       (slave_en),
-        .slave_addr     (slave_addr),
-        .byte_write_i   (byte_write_i),
-        .byte_read_o    (byte_read_o),
-        .read_write_flag(read_write_flag),
-        .byte_finish    (byte_finish),
-        .transmit_busy  (transmit_busy),
-        .transmit_err   (transmit_err),
-        .scl_i          (scl_i),
-        .scl_o          (scl_o),
-        .sda_i          (sda_i),
-        .sda_o          (sda_o)
-    );
-
     // use fsdb/vcd or vcd to save wave
 `ifdef fsdbdump
     initial begin
@@ -69,309 +19,318 @@ module testbench ();
     end
 `endif
 
+    // test parameters
+    parameter test_round = 32;
+    parameter scl_div = 16;
+    parameter clk_period = 20;
+    parameter scl_period = clk_period * scl_div;
+
+    // signals
+    reg clk, rst_n;
+
+    reg slave_en, rd_clr, wr_rdy;
+    wire rd_reg_full, wr_reg_empty;
+    reg  [6:0] local_addr;
+    reg  [7:0] byte_wr_i;
+    wire [7:0] byte_rd_o;
+    wire addr_match, trans_dir, get_nack, trans_stop, bus_err, byte_wait;
+    reg scl, sda;
+    reg m_scl, m_sda;
+    wire scl_o, sda_o;
+
+    // instantiate the module under test
+    I2C_slave test_module (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        // control
+        .slave_en    (slave_en),
+        .rd_clr      (rd_clr),
+        .wr_rdy      (wr_rdy),
+        .rd_reg_full (rd_reg_full),
+        .wr_reg_empty(wr_reg_empty),
+        // address and data
+        .local_addr  (local_addr),
+        .byte_wr_i   (byte_wr_i),
+        .byte_rd_o   (byte_rd_o),
+        // status
+        .addr_match  (addr_match),
+        .trans_dir   (trans_dir),
+        .get_nack    (get_nack),
+        .trans_stop  (trans_stop),
+        .bus_err     (bus_err),
+        .byte_wait   (byte_wait),
+        // I2C
+        .scl_i       (scl),
+        .scl_o       (scl_o),
+        .sda_i       (sda),
+        .sda_o       (sda_o)
+    );
+
+    // sda and scl
+    always @(*) begin
+        scl = scl_o && m_scl;
+        sda = sda_o && m_sda;
+    end
+
     // generate clock and reset
     initial begin
-        clk   = 0;
-        rst_n = 1;
-        #10 rst_n = 0;
-        #10 rst_n = 1;
-        forever #10 clk = ~clk;
+        clk   = 1'b0;
+        rst_n = 1'b1;
+        #clk_period rst_n = 1'b0;
+        #clk_period rst_n = 1'b1;
+        forever #(clk_period / 2) clk = ~clk;
     end
 
-    // counter for clock division
-    reg [31:0] counter;
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            counter <= 32'b0;
-        end
-        else if (test_start) begin
-            if (counter == (clk_divisor - 1)) begin
-                counter <= 32'b0;
-            end
-            else begin
-                counter <= counter + 1;
-            end
-        end
-        else begin
-            counter <= counter;
-        end
-    end
-
-    // generate scl_i
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            scl_i <= 1'b1;
-        end
-        else begin
-            if (counter < (clk_divisor / 2)) begin
-                scl_i <= 1'b1;
-            end
-            else begin
-                scl_i <= 1'b0;
-            end
-        end
-    end
-
-    // detect scl rising and falling edge
-    reg scl_last;
-    wire scl_rise, scl_fall;
-    // save scl last state
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            scl_last <= 1'b1;
-        end
-        else begin
-            scl_last <= scl_i;
-        end
-    end
-    assign scl_rise = (~scl_last) && scl_i;
-    assign scl_fall = scl_last && (~scl_i);
-
-    // task to simulate master writing 1-byte data to slave and check ack
-    task write_to_slave;
-        input [7:0] byte_to_slave;
-        begin
-            if ((bit_cnt == 4'b1000) && scl_rise) begin  // check ACK
-                if (sda_o) begin  // NACK: stop transmitting
-                    ctrl_cnt <= PRE_STOP;
-                end
-                else begin  // ACK: continue transmitting
-                    ctrl_cnt <= ctrl_cnt + 1;
-                end
-                bit_cnt <= 4'b0000;
-            end
-            else if (bit_cnt < 4'b1000) begin  // write 1-byte data
-                if (scl_fall) begin
-                    sda_i <= byte_to_slave[7-bit_cnt];
-                end
-                else if (scl_rise) begin
-                    bit_cnt <= bit_cnt + 1;
-                end
-            end
-        end
-    endtask
-
-    // task to simulating master reading 1-byte data from slave and check ack
-    task read_from_slave;
-        input ack;
-        output [7:0] byte_from_slave;
-        begin
-            if (bit_cnt == 4'b1000) begin
-                if (scl_fall) begin  // write ACK/NACK
-                    if (ack) begin
-                        sda_i <= 1'b0;
-                    end
-                    else begin
-                        sda_i <= 1'b1;
-                    end
-                end
-                else if (scl_rise) begin
-                    bit_cnt  <= 4'b0000;
-                    ctrl_cnt <= ctrl_cnt + 1;
-                end
-            end
-            else if (bit_cnt < 4'b1000) begin  // read 1-byte data
-                if (scl_rise) begin
-                    byte_from_slave <= {byte_from_slave[6:0], sda_o};
-                    bit_cnt <= bit_cnt + 1;
-                end
-            end
-        end
-    endtask
-
-    // task to simulating master reading, writing or combined transmit with slave
-    reg [7:0] byte_read_from_slave, byte_write_to_slave;
-    always @(*) begin
-        if ((ctrl_cnt > ADDR) && (ctrl_cnt <= TRANSMIT)) begin
-            byte_write_to_slave <=
-                data_test_value[((transmit_num-(ctrl_cnt-ADDR)+1)*8-1)-:8];
-        end
-        else begin
-            byte_write_to_slave <= 8'b0;
-        end
-    end
-    task transmit_test;
-        input [6:0] addr;
-        input read_write, combined_mode;
-        begin
-            if (ctrl_cnt == START) begin  // write start
-                if (scl_i) begin
-                    sda_i <= 1'b0;
-                    ctrl_cnt <= ctrl_cnt + 1;
-                end
-            end
-            else if (ctrl_cnt == ADDR) begin  // write address and read/write flag
-                write_to_slave({addr, read_write});
-            end
-            else if (ctrl_cnt <= TRANSMIT) begin  // read/write transmit_num times
-                if (read_write) begin  // master write. slave read
-                    write_to_slave(byte_write_to_slave);
-                end
-                else begin  // master read, slave write
-                    if (ctrl_cnt == TRANSMIT) begin  // NACK to stop
-                        read_from_slave(1'b0, byte_read_from_slave);
-                    end
-                    else begin  // ACK to continue
-                        read_from_slave(1'b1, byte_read_from_slave);
-                    end
-                end
-            end
-            else if (ctrl_cnt == PRE_STOP) begin
-                if (scl_fall) begin
-                    if (combined_mode) begin
-                        sda_i <= 1'b1;
-                        ctrl_cnt <= ctrl_cnt + 2;  // skip stop
-                    end
-                    else begin
-                        sda_i <= 1'b0;
-                        ctrl_cnt <= ctrl_cnt + 1;
-                    end
-                end
-            end
-            else if (ctrl_cnt == STOP) begin  // write stop
-                if (scl_i) begin
-                    sda_i <= 1'b1;
-                    ctrl_cnt <= ctrl_cnt + 1;
-                end
-            end
-        end
-    endtask
-
-    // simulating master transmit with slave
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            sda_i <= 1'b1;
-            byte_read_from_slave <= 8'b0;
-            bit_cnt <= 4'b0;
-        end
-        else if (test_start) begin
-            case (test_ctrl)
-                WRONG_ADDR: begin
-                    transmit_test(wrong_addr, 1'b1, 1'b0);
-                end
-                SLAVE_READ: begin
-                    transmit_test(slave_addr, 1'b1, 1'b0);
-                end
-                SLAVE_WRITE: begin
-                    transmit_test(slave_addr, 1'b0, 1'b0);
-                end
-                SLAVE_COMBINED1: begin
-                    transmit_test(slave_addr, 1'b1, 1'b1);
-                end
-                SLAVE_COMBINED2: begin
-                    transmit_test(slave_addr, 1'b0, 1'b1);
-                end
-                SLAVE_COMBINED3: begin
-                    transmit_test(slave_addr, 1'b1, 1'b0);
-                end
-            endcase
-        end
-    end
-
-    // test and check slave
-    reg [7:0] byte_to_check;
-    always @(*) begin
-        if ((ctrl_cnt > ADDR) && (ctrl_cnt <= TRANSMIT)) begin
-            byte_write_i <= data_test_value[((transmit_num-(ctrl_cnt-ADDR)+1)*8-1)-:8];
-        end
-        else begin
-            byte_write_i <= 8'b0;
-        end
-    end
-    always @(*) begin
-        if ((ctrl_cnt > (ADDR + 1)) && (ctrl_cnt <= (TRANSMIT + 1))) begin
-            byte_to_check <= data_test_value[((transmit_num-ctrl_cnt+3)*8-1)-:8];
-        end
-        else begin
-            byte_to_check <= 8'b0;
-        end
-    end
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-        end
-        else if (byte_finish) begin
-            if (read_write_flag) begin
-                if (byte_read_o != byte_to_check) begin
-                    error_cnt <= error_cnt + 1;
-                    $display("     ++%02d++FAIL++ write/read: %b/%b",
-                             ctrl_cnt - ADDR - 1, byte_to_check, byte_read_o);
-                end
-                else begin
-                    error_cnt <= error_cnt;
-                    $display("     --%02d--PASS-- write/read: %b/%b",
-                             ctrl_cnt - ADDR - 1, byte_to_check, byte_read_o);
-                end
-            end
-            else begin
-                if (byte_read_from_slave != byte_to_check) begin
-                    error_cnt <= error_cnt + 1;
-                    $display("     ++%02d++FAIL++ write/read: %b/%b",
-                             ctrl_cnt - ADDR - 1, byte_to_check, byte_read_from_slave);
-                end
-                else begin
-                    error_cnt <= error_cnt;
-                    $display("     --%02d--PASS-- write/read: %b/%b",
-                             ctrl_cnt - ADDR - 1, byte_to_check, byte_read_from_slave);
-                end
-            end
-        end
-    end
-
-    // start test and generate prompt and log
+    // generate m_scl
+    reg     scl_en;
+    integer scl_cnt;
     initial begin
-        error_cnt = 0;
-
-        // test and check
-        $display("\n**************** 'slave' module test started ***************\n");
-        slave_en   = 1'b1;
-        ctrl_cnt   = 0;
-        test_start = 1'b0;
-        test_ctrl  = WRONG_ADDR;
-        #200 test_start = 1'b1;
-        $display("--1-- wrong address test -----------------------------------");
-        wait (ctrl_cnt == (STOP + 1));
-        ctrl_cnt   = 0;
-        test_start = 1'b0;
-        test_ctrl  = SLAVE_READ;
-        #200 test_start = 1'b1;
-        $display("--2-- slave read data test ---------------------------------");
-        wait (ctrl_cnt == (STOP + 1));
-        ctrl_cnt   = 0;
-        test_start = 1'b0;
-        test_ctrl  = SLAVE_WRITE;
-        #200 test_start = 1'b1;
-        $display("--3-- slave write data test --------------------------------");
-        wait (ctrl_cnt == (STOP + 1));
-        ctrl_cnt   = 0;
-        test_start = 1'b0;
-        test_ctrl  = SLAVE_COMBINED1;
-        #200 test_start = 1'b1;
-        $display("--4-- combined mode test -----------------------------------");
-        $display("-4-1- slave read -------------------------------------------");
-        wait (ctrl_cnt == (STOP + 1));
-        ctrl_cnt   = 0;
-        test_ctrl  = SLAVE_COMBINED2;
-        test_start = 1'b1;
-        $display("-4-2- slave write ------------------------------------------");
-        wait (ctrl_cnt == (STOP + 1));
-        ctrl_cnt   = 0;
-        test_ctrl  = SLAVE_COMBINED3;
-        test_start = 1'b1;
-        $display("-4-3- slave read -------------------------------------------");
-        wait (ctrl_cnt == (STOP + 1));
-        ctrl_cnt   = 0;
-        test_start = 1'b0;
-        slave_en   = 1'b0;
-        $display("------------------------------------------------------------");
-
-        // result
-        if (error_cnt == 0) begin
-            $display("result: passed with 0 errors in tests");
+        scl_en = 1'b0;
+    end
+    always @(posedge clk) begin
+        if (!scl_en) begin
+            m_scl   <= 1'b1;
+            scl_cnt <= 0;
+        end
+        else if (m_scl != scl) begin
+            m_scl   <= m_scl;
+            scl_cnt <= scl_cnt;
+        end
+        else if (scl_cnt == (scl_div / 2 - 1)) begin
+            m_scl   <= 1'b0;
+            scl_cnt <= scl_cnt + 1;
+        end
+        else if (scl_cnt == (scl_div - 1)) begin
+            m_scl   <= 1'b1;
+            scl_cnt <= 0;
         end
         else begin
-            $display("result: failed with %02d errors in tests", error_cnt);
+            m_scl   <= m_scl;
+            scl_cnt <= scl_cnt + 1;
         end
-        $display("\n*************** 'slave' module test finished ***************\n");
+    end
+
+    // task: write start
+    task write_start;
+        integer i;
+        begin
+            m_sda = 1'b1;
+            #(scl_period / 2 + 1) m_sda = 1'b0;
+            scl_en = 1'b1;
+        end
+    endtask
+
+    // task: write stop
+    task write_stop;
+        begin
+            wait (~scl);
+            #(scl_period / 4 + 1) m_sda = 1'b0;
+            wait (scl);
+            #(scl_period / 4 + 1) m_sda = 1'b1;
+            scl_en = 1'b0;
+        end
+    endtask
+
+    // task: write data
+    task write_data;
+        input is_byte;
+        input [7:0] data;
+        integer i;
+        begin
+            i = 0;
+            if (is_byte) begin
+                repeat (8)
+                @(negedge scl) begin
+                    #1 m_sda = data[7-i];
+                    i = i + 1;
+                end
+            end
+            else begin
+                @(negedge scl) #1 m_sda = data[0];
+            end
+        end
+    endtask
+
+    // task: read data
+    task read_data;
+        input is_byte;
+        output reg [7:0] data;
+        integer i;
+        begin
+            i = 0;
+            if (is_byte) begin
+                repeat (8)
+                @(posedge scl) begin
+                    #1 data[7-i] = sda;
+                    i = i + 1;
+                end
+            end
+            else begin
+                @(posedge scl) #1 data[0] = sda;
+            end
+        end
+    endtask
+
+    // task: write n-byte to slave
+    reg [7:0] data_written;
+    task write_to_slave;
+        input [6:0] addr;
+        input [31:0] n_byte;
+        reg     ack;
+        integer i;
+        begin
+            m_scl = 1'b1;
+            m_sda = 1'b1;
+            i = 0;
+            #clk_period;
+            // start
+            write_start;
+            // address
+            write_data(1'b1, {addr, 1'b0});
+            // check ack
+            @(negedge scl) m_sda = 1'b1;  // release sda
+            read_data(1'b0, ack);
+            if (ack) begin
+                write_stop;
+            end
+            else begin
+                // write data
+                for (i = 0; i < n_byte; i = i + 1) begin
+                    data_written = $random % 256;
+                    write_data(1'b1, data_written);
+                    // check ack
+                    @(negedge scl) m_sda = 1'b1;  // release sda
+                    read_data(1'b0, ack);
+                    if (ack) begin
+                        write_stop;
+                        disable write_to_slave;
+                    end
+                end
+                // stop
+                write_stop;
+            end
+        end
+    endtask
+
+    // task: read n-byte from slave
+    reg [7:0] data_read;
+    task read_from_slave;
+        input [6:0] addr;
+        input [31:0] n_byte;
+        reg     ack;
+        integer i;
+        begin
+            m_scl = 1'b1;
+            m_sda = 1'b1;
+            i = 0;
+            #clk_period;
+            // start
+            write_start;
+            // address
+            write_data(1'b1, {addr, 1'b1});
+            // check ack
+            @(negedge scl) m_sda = 1'b1;  // release sda
+            read_data(1'b0, ack);
+            if (ack) begin
+                write_stop;
+            end
+            else begin
+                // read data
+                for (i = 0; i < n_byte; i = i + 1) begin
+                    read_data(1'b1, data_read);
+                    // write ack
+                    if (i == (n_byte - 1)) begin
+                        write_data(1'b0, 8'h01);
+                    end
+                    else begin
+                        write_data(1'b0, 8'h00);
+                    end
+                    @(negedge scl) #1 m_sda = 1;  // release sda
+                end
+                // stop
+                write_stop;
+            end
+        end
+    endtask
+
+    // control test module
+    reg [7:0] slave_read, slave_write;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rd_clr <= 1'b0;
+            slave_read <= 8'b0;
+        end
+        else if ((~trans_dir) && rd_reg_full) begin
+            rd_clr <= 1'b1;
+            slave_read <= byte_rd_o;
+        end
+        else begin
+            rd_clr <= 1'b0;
+            slave_read <= slave_read;
+        end
+    end
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wr_rdy <= 1'b0;
+            slave_write <= ($random % 256);
+            byte_wr_i <= 8'b0;
+        end
+        else if (trans_dir && wr_reg_empty && (~wr_rdy)) begin
+            wr_rdy <= 1'b1;
+            slave_write <= ($random % 256);
+            byte_wr_i <= slave_write;
+        end
+        else begin
+            wr_rdy <= 1'b0;
+            slave_write <= slave_write;
+            byte_wr_i <= byte_wr_i;
+        end
+    end
+
+    // test module
+    integer test_cnt;
+    integer err_cnt;
+    initial begin
+        test_cnt = 0;
+        err_cnt = 0;
+        slave_en = 0;
+        local_addr = 7'b010_0101;
+        #clk_period slave_en = 1;
+
+        $display("\n******************** module test started *******************\n");
+        // wrong address
+        write_to_slave((~local_addr), 1);
+        #scl_period;
+
+        // write
+        write_to_slave(local_addr, 1);
+        #scl_period;
+
+        write_to_slave(local_addr, 2);
+        #scl_period;
+
+        write_to_slave(local_addr, 3);
+        #scl_period;
+
+        // read
+        read_from_slave(local_addr, 1);
+        #scl_period;
+
+        read_from_slave(local_addr, 2);
+        #scl_period;
+
+        read_from_slave(local_addr, 3);
+        #scl_period;
+
+        $display("------------------------------------------------------------");
+        // result
+        if (err_cnt == 0) begin
+            $display("result: passed with 0 error");
+        end
+        else begin
+            $display("result: failed with %02d errors in tests", err_cnt);
+        end
+        $display("\n******************* module test finished *******************\n");
         $finish;
     end
 

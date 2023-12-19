@@ -4,7 +4,7 @@
  *
  * file name: I2C_slave.v
  * create date: 2023.12.02
- * last modified date: 2023.12.18
+ * last modified date: 2023.12.20
  *
  * design name: I2C_controller
  * module name: I2C_slave
@@ -28,6 +28,8 @@
  *     feature: add more control and status signals
  *              add clock stretch
  *              add registers to write next or read previous byte while current transmit
+ * V3.1 - 2023.12.20
+ *     fix: timing and logic issues
  */
 
 module I2C_slave (
@@ -76,7 +78,7 @@ module I2C_slave (
     );
 
     // instantiate submodule to write
-    reg wr_en, wr_is_byte, wr_data_i, wr_bit;
+    reg wr_en, wr_is_byte, wr_data_i;
     wire wr_ld, wr_data_o, wr_get_start, wr_get_stop, wr_bus_err, wr_err, wr_finish;
     I2C_write U_slave_write (
         .clk      (clk),
@@ -111,7 +113,7 @@ module I2C_slave (
     end
     // detect scl falling edge when enabled, combinational circuit
     always @(*) begin
-        scl_fall = rd_en && scl_last && (~scl_i);
+        scl_fall = slave_en && scl_last && (~scl_i);
     end
 
     // detect start and stop condition (sda changes during scl high)
@@ -165,7 +167,6 @@ module I2C_slave (
             byte_rd_o   <= byte_rd_o;
         end
     end
-
     // copy data from input register to shift register
     reg [7:0] byte_wr_reg;
     reg       wr_copy;
@@ -175,7 +176,7 @@ module I2C_slave (
             wr_shifter   <= 8'b0;
             byte_wr_reg  <= 8'b0;
         end
-        else if (!slave_en) begin
+        else if ((~slave_en) || get_start || get_stop) begin
             wr_reg_empty <= 1'b1;
             wr_shifter   <= 8'b0;
             byte_wr_reg  <= 8'b0;
@@ -206,7 +207,7 @@ module I2C_slave (
             wr_data_i = wr_shifter[7];
         end
         else begin
-            wr_data_i = wr_bit;
+            wr_data_i = 1'b0;  // 1-bit only used to write ACK
         end
     end
 
@@ -285,10 +286,10 @@ module I2C_slave (
                     state_next = ADDRESS_ACK;
                 end
                 else if (trans_dir) begin
-                    state_next = READ_DATA;
+                    state_next = WAIT_WRITE;
                 end
                 else begin
-                    state_next = WAIT_WRITE;
+                    state_next = READ_DATA;
                 end
             end
             READ_DATA: begin
@@ -305,7 +306,7 @@ module I2C_slave (
                     state_next = WRITE_ACK;
                 end
             end
-            WRITE_ACK: begin
+            WRITE_ACK: begin  // sda low, bus error won't happen
                 if (!wr_finish) begin
                     state_next = WRITE_ACK;
                 end
@@ -316,7 +317,7 @@ module I2C_slave (
                     state_next = WAIT_READ;
                 end
             end
-            WAIT_READ: begin
+            WAIT_READ: begin  // scl low, bus error won't happen
                 if (!rd_reg_full) begin
                     state_next = READ_DATA;
                 end
@@ -324,7 +325,7 @@ module I2C_slave (
                     state_next = WAIT_READ;
                 end
             end
-            WAIT_WRITE: begin
+            WAIT_WRITE: begin  // scl low, bus error won't happen
                 if (!wr_reg_empty) begin
                     state_next = WRITE_DATA;
                 end
@@ -332,7 +333,7 @@ module I2C_slave (
                     state_next = WAIT_WRITE;
                 end
             end
-            WRITE_DATA: begin
+            WRITE_DATA: begin  // slave ignore write failure
                 if (wr_get_start) begin
                     state_next = START;
                 end
@@ -386,34 +387,29 @@ module I2C_slave (
         case (state_current)
             IDLE, START, WAIT_READ, WAIT_WRITE, WAIT_STOP: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_byte} = 4'b00_00;
-                wr_bit = 1'b0;
             end
             ADDRESS, READ_DATA: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_byte} = 4'b11_00;
-                wr_bit = 1'b0;
             end
             ADDRESS_ACK, WRITE_ACK: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_byte} = 4'b00_10;
-                wr_bit = 1'b0;
             end
             WRITE_DATA: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_byte} = 4'b00_11;
-                wr_bit = 1'b0;
             end
             CHECK_ACK: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_byte} = 4'b10_00;
-                wr_bit = 1'b0;
             end
             default: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_byte} = 4'b00_00;
-                wr_bit = 1'b0;
             end
         endcase
     end
 
     // copy from register
     always @(*) begin
-        if ((state_current == WRITE_ACK) || (state_current == WAIT_READ)) begin
+        if (((state_current == WRITE_ACK) && wr_finish)
+            || (state_current == WAIT_READ)) begin
             if (!rd_reg_full) begin
                 rd_copy = 1'b1;
             end
@@ -428,7 +424,8 @@ module I2C_slave (
 
     // copy to register
     always @(*) begin
-        if ((state_current == CHECK_ACK) || (state_current == WAIT_WRITE)) begin
+        if (((state_current == CHECK_ACK) && rd_finish && (~get_nack))
+            || (state_current == WAIT_WRITE)) begin
             if (!wr_reg_empty) begin
                 wr_copy = 1'b1;
             end
@@ -476,7 +473,7 @@ module I2C_slave (
 
     // get NACK
     always @(*) begin
-        if (state_current == CHECK_ACK) begin
+        if ((state_current == CHECK_ACK) && rd_finish) begin
             if (rd_shifter[0]) begin
                 get_nack = 1'b1;
             end
@@ -491,17 +488,7 @@ module I2C_slave (
 
     // transmit stop
     always @(*) begin
-        if (state_current == WAIT_STOP) begin
-            if (get_stop) begin
-                trans_stop = 1'b1;
-            end
-            else begin
-                trans_stop = 1'b0;
-            end
-        end
-        else begin
-            trans_stop = 1'b0;
-        end
+        trans_stop = get_stop;
     end
 
     // bus error, start or stop condition at wrong place

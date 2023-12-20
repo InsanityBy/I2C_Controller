@@ -4,7 +4,7 @@
  *
  * file name: clock_divisor.v
  * create date: 2023.12.09
- * last modified date: 2023.12.12
+ * last modified date: 2023.12.21
  *
  * design name: I2C_controller
  * module name: clock_divisor
@@ -21,6 +21,8 @@
  *     group module inputs and outputs
  * V1.2 - 2023.12.12
  *     rename signals
+ * V1.3 - 2023.12.21
+ *     refactor: move setting clk_div external
  */
 
 module clock_divisor (
@@ -28,25 +30,10 @@ module clock_divisor (
     input rst_n,
     // control
     input clk_en,
-    input [3:0] set_clk_div,  // 0~15, f_{clk_o} = f_{clk_i}/(2*(clk_div+1))
-    // status
-    output reg [3:0] clk_div,  // current clk_div value
+    input [3:0] clk_div,  // 0~15, f_{clk_o} = f_{clk_i}/(2*(clk_div+1))
     // clock output
     output reg clk_o
 );
-
-    // set clock divisor
-    always @(posedge clk_i or negedge rst_n) begin
-        if (!rst_n) begin
-            clk_div <= 4'b0;
-        end
-        else if (!clk_en) begin  // clk_div can ONLY be set when module disabled
-            clk_div <= set_clk_div;
-        end
-        else begin
-            clk_div <= clk_div;
-        end
-    end
 
     // counter to divide clock
     reg [3:0] clk_cnt;

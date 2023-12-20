@@ -4,7 +4,7 @@
  *
  * file name: I2C_read.v
  * create date: 2023.12.11
- * last modified date: 2023.12.19
+ * last modified date: 2023.12.21
  *
  * design name: I2C_controller
  * module name: I2C_read
@@ -22,6 +22,8 @@
  *     feature: support both master and slave
  * V1.3 - 2023.12.19
  *     fix: ambiguous clock
+ * V1.4 - 2023.12.21
+ *     fix: timing issues
  */
 
 module I2C_read (
@@ -154,7 +156,7 @@ module I2C_read (
                 rd_finish <= 1'b1;
             end
             else begin
-                rd_finish <= rd_finish;
+                rd_finish <= 1'b0;
             end
         end
         else begin
@@ -162,7 +164,7 @@ module I2C_read (
                 rd_finish <= 1'b1;
             end
             else begin
-                rd_finish <= rd_finish;
+                rd_finish <= 1'b0;
             end
         end
     end

@@ -4,7 +4,7 @@
  *
  * file name: I2C_write.v
  * create date: 2023.12.12
- * last modified date: 2023.12.17
+ * last modified date: 2023.12.21
  *
  * design name: I2C_controller
  * module name: I2C_write
@@ -19,6 +19,8 @@
  *     initial version
  * V1.1 - 2023.12.17
  *     feature: support both master and slave
+ * V1.2 - 2023.12.21
+ *     fix: timing issues
  */
 
 module I2C_write (
@@ -209,7 +211,7 @@ module I2C_write (
                 wr_finish <= 1'b1;
             end
             else begin
-                wr_finish <= wr_finish;
+                wr_finish <= 1'b0;
             end
         end
         else begin
@@ -217,7 +219,7 @@ module I2C_write (
                 wr_finish <= 1'b1;
             end
             else begin
-                wr_finish <= wr_finish;
+                wr_finish <= 1'b0;
             end
         end
     end

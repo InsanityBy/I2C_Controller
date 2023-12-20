@@ -4,7 +4,7 @@
  *
  * file name: I2C_master.v
  * create date: 2023.11.23
- * last modified date: 2023.12.18
+ * last modified date: 2023.12.21
  *
  * design name: I2C_controller
  * module name: I2C_master
@@ -24,6 +24,8 @@
  *              add clock stretch
  *              add arbitration
  *              add registers to write next or read previous byte while current transmit
+ * V2.1 - 2023.12.21
+ *     fix: timing and logic issues
  */
 
 module I2C_master (
@@ -41,20 +43,20 @@ module I2C_master (
     input [7:0] byte_wr_i,  // 1-byte data write to I2C bus
     output reg [7:0] byte_rd_o,  // 1-byte data read from I2C bus
     // status
-    output reg trans_start,  // write start condition, start transmit
+    output reg trans_start,  // finish writing start condition, start transmit
     output reg addr_match,  // 1 for addressing slave successfully
     output reg trans_dir,  // transmit direction, 1 for reading, 0 for writing
     output reg get_nack,  // 1 for NACK, 0 for ACK
-    output reg trans_stop,  // write stop condition, stop transmit
+    output reg trans_stop,  // finish writing stop condition, stop transmit
     output reg bus_err,  // receive start or stop condition at wrong place
     output reg byte_wait,  // 1 for data wait to be read or written to continue
     output reg arbit_fail,  // arbitration fail
     // I2C
     input [7:0] set_scl_div,  // 1~255, f_{scl_o} = f_{clk}/(2*(scl_div+1))
     output [7:0] scl_div,  // current scl_div value
-    input scl_i,
+    input scl_i,  // must be synchronized external
     output scl_o,
-    input sda_i,
+    input sda_i,  // must be synchronized external
     output sda_o
 );
     // instantiate submodule to generate scl
@@ -91,7 +93,7 @@ module I2C_master (
     );
 
     // instantiate submodule to write
-    reg wr_en, wr_is_data, wr_is_byte, wr_data_i, wr_bit, wr_command_i;
+    reg wr_en, wr_is_data, wr_is_byte, wr_data_i, wr_command_i;
     wire wr_ld, wr_data_o, wr_get_start, wr_get_stop, wr_bus_err, wr_err, wr_finish;
     I2C_write U_master_write (
         .clk      (clk),
@@ -147,7 +149,6 @@ module I2C_master (
             byte_rd_o   <= byte_rd_o;
         end
     end
-
     // copy data from input register to shift register
     reg [7:0] byte_wr_reg;
     reg       wr_copy;
@@ -157,7 +158,7 @@ module I2C_master (
             wr_shifter   <= 8'b0;
             byte_wr_reg  <= 8'b0;
         end
-        else if (!master_en) begin
+        else if ((~master_en) || trans_start || trans_stop) begin
             wr_reg_empty <= 1'b1;
             wr_shifter   <= 8'b0;
             byte_wr_reg  <= 8'b0;
@@ -183,6 +184,7 @@ module I2C_master (
     end
 
     // connect to I2C_write module, combinational circuit
+    reg wr_bit;
     always @(*) begin
         if (wr_is_byte) begin
             wr_data_i = wr_shifter[7];
@@ -194,23 +196,25 @@ module I2C_master (
 
     // finite state machine
     // state encode
-    parameter IDLE = 12'h000;
-    parameter START = 12'h001;
-    parameter WAIT_ADDRESS = 12'h002;
-    parameter ADDRESS = 12'h004;
-    parameter ADDRESS_ACK = 12'h008;
-    parameter READ_DATA = 12'h010;
-    parameter WRITE_ACK = 12'h020;
-    parameter WAIT_READ = 12'h040;
-    parameter WAIT_WRITE = 12'h080;
-    parameter WRITE_DATA = 12'h100;
-    parameter CHECK_ACK = 12'h200;
-    parameter WAIT = 12'h400;
-    parameter STOP = 12'h800;
+    parameter IDLE = 14'h0000;
+    parameter START = 14'h0001;
+    parameter WAIT_ADDRESS = 14'h0002;
+    parameter LOAD_ADDRESS = 14'h0004;
+    parameter ADDRESS = 14'h0008;
+    parameter ADDRESS_ACK = 14'h0010;
+    parameter READ_DATA = 14'h0020;
+    parameter WRITE_ACK = 14'h0040;
+    parameter WRITE_NACK = 14'h0080;
+    parameter WAIT_READ = 14'h0100;
+    parameter WAIT_WRITE = 14'h0200;
+    parameter WRITE_DATA = 14'h0400;
+    parameter CHECK_ACK = 14'h0800;
+    parameter WAIT = 14'h1000;
+    parameter STOP = 14'h2000;
 
     // state variable
-    reg [11:0] state_next;
-    reg [11:0] state_current;
+    reg [13:0] state_next;
+    reg [13:0] state_current;
 
     // state transfer, sequential circuit
     always @(posedge clk or negedge rst_n) begin
@@ -241,13 +245,16 @@ module I2C_master (
                     state_next = WAIT_ADDRESS;
                 end
             end
-            WAIT_ADDRESS: begin
+            WAIT_ADDRESS: begin  // scl low
                 if (!wr_reg_empty) begin
-                    state_next = ADDRESS;
+                    state_next = LOAD_ADDRESS;
                 end
                 else begin
                     state_next = WAIT_ADDRESS;
                 end
+            end
+            LOAD_ADDRESS: begin
+                state_next = ADDRESS;
             end
             ADDRESS: begin
                 if (wr_bus_err || wr_err) begin  // lost arbitration
@@ -261,7 +268,10 @@ module I2C_master (
                 end
             end
             ADDRESS_ACK: begin
-                if (!rd_finish) begin
+                if (rd_bus_err) begin
+                    state_next = IDLE;
+                end
+                else if (!rd_finish) begin
                     state_next = ADDRESS_ACK;
                 end
                 else if (get_nack) begin
@@ -281,19 +291,16 @@ module I2C_master (
                 else if (!rd_finish) begin
                     state_next = READ_DATA;
                 end
+                else if (start_trans || stop_trans) begin
+                    state_next = WRITE_NACK;
+                end
                 else begin
                     state_next = WRITE_ACK;
                 end
             end
-            WRITE_ACK: begin
+            WRITE_ACK: begin  // sda low, bus error won't happen
                 if (!wr_finish) begin
                     state_next = WRITE_ACK;
-                end
-                else if (start_trans) begin
-                    state_next = START;
-                end
-                else if (stop_trans) begin
-                    state_next = STOP;
                 end
                 else if (!rd_reg_full) begin
                     state_next = READ_DATA;
@@ -302,7 +309,21 @@ module I2C_master (
                     state_next = WAIT_READ;
                 end
             end
-            WAIT_READ: begin
+            WRITE_NACK: begin
+                if (!wr_finish) begin
+                    state_next = WRITE_NACK;
+                end
+                else if (start_trans) begin
+                    state_next = START;
+                end
+                else if (stop_trans) begin
+                    state_next = STOP;
+                end
+                else begin
+                    state_next = WAIT;
+                end
+            end
+            WAIT_READ: begin  // scl low, bus error won't happen
                 if (!rd_reg_full) begin
                     state_next = READ_DATA;
                 end
@@ -310,8 +331,14 @@ module I2C_master (
                     state_next = WAIT_READ;
                 end
             end
-            WAIT_WRITE: begin
-                if (!wr_reg_empty) begin
+            WAIT_WRITE: begin  // scl low, bus error won't happen
+                if (start_trans) begin
+                    state_next = START;
+                end
+                else if (stop_trans) begin
+                    state_next = STOP;
+                end
+                else if (!wr_reg_empty) begin
                     state_next = WRITE_DATA;
                 end
                 else begin
@@ -358,7 +385,12 @@ module I2C_master (
                 end
             end
             STOP: begin
-                state_next = IDLE;
+                if (!wr_finish) begin
+                    state_next = STOP;
+                end
+                else begin
+                    state_next = IDLE;
+                end
             end
             default: begin
                 state_next = IDLE;
@@ -370,52 +402,58 @@ module I2C_master (
     // submodules enable
     always @(*) begin
         case (state_current)
-            IDLE, WAIT_ADDRESS, WAIT_READ, WAIT_WRITE, WAIT: begin
+            IDLE, WAIT_ADDRESS, LOAD_ADDRESS, WAIT_READ, WAIT_WRITE, WAIT: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_000;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
             end
             START: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_100;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b1;
+                wr_bit = 1'b0;
             end
             ADDRESS, WRITE_DATA: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_111;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
             end
             ADDRESS_ACK, CHECK_ACK: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b10_000;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
             end
             READ_DATA: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b11_000;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
             end
             WRITE_ACK: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_110;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
+            end
+            WRITE_NACK: begin
+                {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_110;
+                wr_command_i = 1'b0;
+                wr_bit = 1'b1;
             end
             STOP: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_100;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
             end
             default: begin
                 {rd_en, rd_is_byte, wr_en, wr_is_data, wr_is_byte} = 5'b00_000;
-                wr_bit = 1'b0;
                 wr_command_i = 1'b0;
+                wr_bit = 1'b0;
             end
         endcase
     end
 
     // copy from register
     always @(*) begin
-        if ((state_current == WRITE_ACK) || (state_current == WAIT_READ)) begin
+        if (((state_current == WRITE_ACK) && wr_finish)
+            || (state_current == WAIT_READ)) begin
             if (!rd_reg_full) begin
                 rd_copy = 1'b1;
             end
@@ -430,15 +468,18 @@ module I2C_master (
 
     // copy to register
     always @(*) begin
-        if ((state_current == CHECK_ACK)
-        || (state_current == WAIT_WRITE)
-        || (state_current == WAIT_ADDRESS)) begin
+        if (((state_current == CHECK_ACK) && rd_finish && (~get_nack))
+            || (state_current == WAIT_WRITE)
+            || (state_current == WAIT_ADDRESS)) begin
             if (!wr_reg_empty) begin
                 wr_copy = 1'b1;
             end
             else begin
                 wr_copy = 1'b0;
             end
+        end
+        else if (state_current == LOAD_ADDRESS) begin
+            wr_copy = 1'b1;
         end
         else begin
             wr_copy = 1'b0;
@@ -448,13 +489,8 @@ module I2C_master (
     // status
     // transmit start
     always @(*) begin
-        if (state_current == START) begin
-            if (wr_finish) begin
-                trans_start = 1'b1;
-            end
-            else begin
-                trans_start = 1'b0;
-            end
+        if ((state_current == START) && wr_finish) begin
+            trans_start = 1'b1;
         end
         else begin
             trans_start = 1'b0;
@@ -463,13 +499,8 @@ module I2C_master (
 
     // address match
     always @(*) begin
-        if (state_current == ADDRESS_ACK) begin
-            if (!get_nack) begin
-                addr_match = 1'b1;
-            end
-            else begin
-                addr_match = 1'b0;
-            end
+        if ((state_current == ADDRESS_ACK) && rd_finish && (~get_nack)) begin
+            addr_match = 1'b1;
         end
         else begin
             addr_match = 1'b0;
@@ -481,29 +512,22 @@ module I2C_master (
         if (!rst_n) begin
             trans_dir <= 1'b0;
         end
+        // reset when disabled/start/stop
+        else if ((~master_en) || trans_start || trans_stop) begin
+            trans_dir <= 1'b0;
+        end
+        else if (state_current == LOAD_ADDRESS) begin
+            trans_dir <= wr_shifter[0];
+        end
         else begin
-            case (state_current)
-                IDLE, START, STOP: begin  // reset when disabled/start/stop
-                    trans_dir <= 1'b0;
-                end
-                WAIT_ADDRESS: begin
-                    if (!wr_reg_empty) begin
-                        trans_dir <= wr_shifter[0];
-                    end
-                    else begin
-                        trans_dir <= trans_dir;
-                    end
-                end
-                default: begin
-                    trans_dir <= trans_dir;
-                end
-            endcase
+            trans_dir <= trans_dir;
         end
     end
 
     // get NACK
     always @(*) begin
-        if ((state_current == CHECK_ACK) || (state_current == ADDRESS_ACK)) begin
+        if (((state_current == CHECK_ACK) || (state_current == ADDRESS_ACK))
+            && rd_finish) begin
             if (rd_shifter[0]) begin
                 get_nack = 1'b1;
             end
@@ -516,14 +540,10 @@ module I2C_master (
         end
     end
 
+    // transmit stop
     always @(*) begin
-        if (state_current == STOP) begin
-            if (wr_finish) begin
-                trans_stop = 1'b1;
-            end
-            else begin
-                trans_stop = 1'b0;
-            end
+        if ((state_current == STOP) && wr_finish) begin
+            trans_stop = 1'b1;
         end
         else begin
             trans_stop = 1'b0;
@@ -572,7 +592,8 @@ module I2C_master (
     always @(*) begin
         if ((state_current == WAIT_READ)
         || (state_current == WAIT_WRITE)
-        || (state_current == WAIT_ADDRESS)) begin
+        || (state_current == WAIT_ADDRESS)
+        || (state_current == LOAD_ADDRESS)) begin
             scl_wait = 1'b1;
         end
         else begin

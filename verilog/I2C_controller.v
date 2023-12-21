@@ -14,7 +14,6 @@
  *     I2C_slave.v
  *     I2C_master.v
  *     reset_generator.v
- *     clock_divisor.v
  *
  * revision:
  * V1.0 - 2023.12.18
@@ -22,14 +21,14 @@
  * V1.1 - 2023.12.21
  *     refactor: move setting scl_div and clk_div external
  *     fix: reset signal
+ * V1.2 - 2023.12.21
+ *     refactor: remove clock divisor
  */
 module I2C_controller (
     input clk,
     input rst_n,
     // control
     input enable,
-    input [3:0] set_clk_div,  // 0~15, can ONLY be set when module disabled
-    output reg [3:0] clk_div,  // current value of clk_div
     input [7:0] set_scl_div,  // 1~255, can ONLY be set when module disabled
     output reg [7:0] scl_div,  // current value of scl_div
     input start_trans,  // restart after current transmission(master)
@@ -69,16 +68,6 @@ module I2C_controller (
         .rst_sync_n(rst_sync_n)
     );
 
-    // instantiate submodule to divide the high-speed system clock for other parts of the module
-    wire clk_sys;
-    clock_divisor U_clock (
-        .clk_i  (clk),
-        .rst_n  (rst_sync_n),
-        .clk_en (enable),
-        .clk_div(clk_div),
-        .clk_o  (clk_sys)
-    );
-
     // instantiate slave module
     reg        slave_en;
     wire [7:0] s_byte_rd_o;
@@ -86,7 +75,7 @@ module I2C_controller (
     wire s_addr_match, s_trans_dir, s_get_nack, s_trans_stop, s_bus_err, s_byte_wait;
     wire s_scl_o, s_sda_o;
     I2C_slave U_slave (
-        .clk         (clk_sys),
+        .clk         (clk),
         .rst_n       (rst_sync_n),
         // control
         .slave_en    (slave_en),
@@ -120,7 +109,7 @@ module I2C_controller (
          m_byte_wait, m_arbit_fail;
     wire m_scl_o, m_sda_o;
     I2C_master u_master (
-        .clk         (clk_sys),
+        .clk         (clk),
         .rst_n       (rst_sync_n),
         // control
         .master_en   (master_en),
@@ -211,19 +200,6 @@ module I2C_controller (
         end
         else begin
             local_addr <= local_addr;
-        end
-    end
-
-    // set clock divisor
-    always @(posedge clk or negedge rst_sync_n) begin
-        if (!rst_sync_n) begin
-            clk_div <= 4'b0;
-        end
-        else if (!enable) begin  // clk_div can ONLY be set when module disabled
-            clk_div <= set_clk_div;
-        end
-        else begin
-            clk_div <= clk_div;
         end
     end
 

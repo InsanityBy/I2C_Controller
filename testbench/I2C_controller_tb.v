@@ -22,7 +22,6 @@ module testbench ();
     // test parameters
     parameter test_round = 32;
     parameter scl_div = 32;
-    parameter clk_div = 0;
     parameter clk_period = 20;
     parameter local_addr = 7'b110_1010;
     parameter scl_period = clk_period * scl_div;
@@ -31,7 +30,7 @@ module testbench ();
     reg clk, rst_n;
 
     reg enable, rd_clr, wr_rdy, start_trans, stop_trans;
-    wire clk_div_cur, scl_div_cur, rd_reg_full, wr_reg_empty;
+    wire scl_div_cur, rd_reg_full, wr_reg_empty;
     wire [6:0] local_addr_cur;
     reg  [7:0] byte_wr_i;
     wire [7:0] byte_rd_o;
@@ -47,8 +46,6 @@ module testbench ();
         .rst_n         (rst_n),
         // control
         .enable        (enable),
-        .set_clk_div   (clk_div),
-        .clk_div       (clk_div_cur),
         .set_scl_div   (scl_div),
         .scl_div       (scl_div_cur),
         .start_trans   (start_trans),

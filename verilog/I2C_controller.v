@@ -19,6 +19,9 @@
  * revision:
  * V1.0 - 2023.12.18
  *     initial version
+ * V1.1 - 2023.12.21
+ *     refactor: move setting scl_div and clk_div external
+ *     fix: reset signal
  */
 module I2C_controller (
     input clk,
@@ -26,9 +29,9 @@ module I2C_controller (
     // control
     input enable,
     input [3:0] set_clk_div,  // 0~15, can ONLY be set when module disabled
-    output [3:0] clk_div,  // current value of clk_div
+    output reg [3:0] clk_div,  // current value of clk_div
     input [7:0] set_scl_div,  // 1~255, can ONLY be set when module disabled
-    output [7:0] scl_div,  // current value of scl_div
+    output reg [7:0] scl_div,  // current value of scl_div
     input start_trans,  // restart after current transmission(master)
     input stop_trans,  // stop after current transmission(master)
     input rd_clr,  // data in output register has been read
@@ -43,13 +46,13 @@ module I2C_controller (
     // status
     output reg bus_busy,  // bus status, 1 for busy, 0 for free
     output reg is_master,  // controller mode, 1 for master, 0 for slave
-    output trans_start,  // write start condition, start transmit(master)
+    output reg trans_start,  // write start condition, start transmit(master)
     output reg addr_match,  // address received matches(slave), address matches slave(master)
     output reg trans_dir,  // transmit direction, 1 for reading, 0 for writing
     output reg get_nack,  // 1 for NACK, 0 for ACK
     output reg bus_err,  // receive start or stop condition at wrong place
     output reg byte_wait,  // 1 for data wait to be read or written to continue
-    output arbit_fail,  // arbitration fail(master)
+    output reg arbit_fail,  // arbitration fail(master)
     output reg trans_stop,  // receive stop condition, stop transmit
     //I2C
     input scl_i,
@@ -66,15 +69,14 @@ module I2C_controller (
         .rst_sync_n(rst_sync_n)
     );
 
-    // instantiate submodule to  divide the high-speed system clock for other parts of the module
+    // instantiate submodule to divide the high-speed system clock for other parts of the module
     wire clk_sys;
     clock_divisor U_clock (
-        .clk_i      (clk),
-        .rst_n      (rst_sync_n),
-        .clk_en     (enable),
-        .set_clk_div(set_clk_div),
-        .clk_div    (clk_div),
-        .clk_o      (clk_sys)
+        .clk_i  (clk),
+        .rst_n  (rst_sync_n),
+        .clk_en (enable),
+        .clk_div(clk_div),
+        .clk_o  (clk_sys)
     );
 
     // instantiate slave module
@@ -114,13 +116,15 @@ module I2C_controller (
     reg        master_en;
     wire [7:0] m_byte_rd_o;
     wire m_rd_reg_full, m_wr_reg_empty;
-    wire m_addr_match, m_trans_dir, m_get_nack, m_trans_stop, m_bus_err, m_byte_wait;
+    wire m_trans_start, m_addr_match, m_trans_dir, m_get_nack, m_trans_stop, m_bus_err,
+         m_byte_wait, m_arbit_fail;
     wire m_scl_o, m_sda_o;
     I2C_master u_master (
         .clk         (clk_sys),
         .rst_n       (rst_sync_n),
         // control
         .master_en   (master_en),
+        .scl_div     (scl_div),
         .start_trans (start_trans),
         .stop_trans  (stop_trans),
         .rd_clr      (rd_clr),
@@ -131,17 +135,15 @@ module I2C_controller (
         .byte_wr_i   (byte_wr_i),
         .byte_rd_o   (m_byte_rd_o),
         // status
-        .trans_start (trans_start),
+        .trans_start (m_trans_start),
         .addr_match  (m_addr_match),
         .trans_dir   (m_trans_dir),
         .get_nack    (m_get_nack),
         .trans_stop  (m_trans_stop),
         .bus_err     (m_bus_err),
         .byte_wait   (m_byte_wait),
-        .arbit_fail  (arbit_fail),
+        .arbit_fail  (m_arbit_fail),
         // I2C
-        .set_scl_div (set_scl_div),
-        .scl_div     (scl_div),
         .scl_i       (scl_i),
         .scl_o       (m_scl_o),
         .sda_i       (sda_i),
@@ -150,6 +152,10 @@ module I2C_controller (
 
     // connect
     always @(*) begin
+        trans_start = m_trans_start;
+        arbit_fail  = m_arbit_fail;
+    end
+    always @(*) begin
         if (is_master) begin
             byte_rd_o = m_byte_rd_o;
             rd_reg_full = m_rd_reg_full;
@@ -157,9 +163,9 @@ module I2C_controller (
             addr_match = m_addr_match;
             trans_dir = m_trans_dir;
             get_nack = m_get_nack;
+            trans_stop = m_trans_stop;
             bus_err = m_bus_err;
             byte_wait = m_byte_wait;
-            trans_stop = m_trans_stop;
             scl_o = m_scl_o;
             sda_o = m_sda_o;
         end
@@ -170,9 +176,9 @@ module I2C_controller (
             addr_match = s_addr_match;
             trans_dir = s_trans_dir;
             get_nack = s_get_nack;
+            trans_stop = s_trans_stop;
             bus_err = s_bus_err;
             byte_wait = s_byte_wait;
-            trans_stop = s_trans_stop;
             scl_o = s_scl_o;
             sda_o = s_sda_o;
         end
@@ -181,8 +187,8 @@ module I2C_controller (
     // detect start and stop condition (sda changes during scl high)
     reg sda_last, get_start, get_stop;
     // save sda last value, sequential circuit
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
             sda_last <= 1'b1;
         end
         else begin
@@ -196,8 +202,8 @@ module I2C_controller (
     end
 
     // set local address
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
             local_addr <= 7'b100_1001;
         end
         else if (!enable) begin  // local_addr can ONLY be set when module disabled
@@ -205,6 +211,37 @@ module I2C_controller (
         end
         else begin
             local_addr <= local_addr;
+        end
+    end
+
+    // set clock divisor
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
+            clk_div <= 4'b0;
+        end
+        else if (!enable) begin  // clk_div can ONLY be set when module disabled
+            clk_div <= set_clk_div;
+        end
+        else begin
+            clk_div <= clk_div;
+        end
+    end
+
+    // set scl divisor
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
+            scl_div <= 8'h01;
+        end
+        else if (!enable) begin  // scl_div can ONLY be set when module disabled
+            if (set_scl_div == 8'b0) begin
+                scl_div <= 8'h01;
+            end
+            else begin
+                scl_div <= set_scl_div;
+            end
+        end
+        else begin
+            scl_div <= scl_div;
         end
     end
 
@@ -219,8 +256,8 @@ module I2C_controller (
     reg [1:0] state_current;
 
     // state transfer, sequential circuit
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
             state_current <= IDLE;
         end
         else begin
@@ -288,7 +325,7 @@ module I2C_controller (
 
     // status
     // bus busy
-    always @(posedge clk_sys or negedge rst_sync_n) begin
+    always @(posedge clk or negedge rst_sync_n) begin
         if (!rst_sync_n) begin
             bus_busy <= 1'b0;
         end

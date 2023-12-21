@@ -44,6 +44,7 @@ module testbench ();
         .rst_n       (rst_n),
         // control
         .master_en   (master_en),
+        .scl_div     (8'd16),
         .start_trans (start_trans),
         .stop_trans  (stop_trans),
         .rd_clr      (rd_clr),
@@ -63,8 +64,6 @@ module testbench ();
         .byte_wait   (byte_wait),
         .arbit_fail  (arbit_fail),
         // I2C
-        .set_scl_div (8'd16),
-        .scl_div     (m_scl_div),
         .scl_i       (scl),
         .scl_o       (scl_o),
         .sda_i       (sda),

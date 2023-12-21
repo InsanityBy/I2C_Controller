@@ -26,6 +26,8 @@
  *              add registers to write next or read previous byte while current transmit
  * V2.1 - 2023.12.21
  *     fix: timing and logic issues
+ * V2.2 - 2023.12.21
+ *     refactor: move setting scl_div external
  */
 
 module I2C_master (
@@ -33,6 +35,7 @@ module I2C_master (
     input rst_n,
     // control
     input master_en,
+    input [7:0] scl_div,  // 1~255, f_{scl_o} = f_{clk}/(2*(scl_div+1))
     input start_trans,  // restart after current transmission
     input stop_trans,  // stop after current transmission
     input rd_clr,  // data in output register has been read
@@ -52,8 +55,6 @@ module I2C_master (
     output reg byte_wait,  // 1 for data wait to be read or written to continue
     output reg arbit_fail,  // arbitration fail
     // I2C
-    input [7:0] set_scl_div,  // 1~255, f_{scl_o} = f_{clk}/(2*(scl_div+1))
-    output [7:0] scl_div,  // current scl_div value
     input scl_i,  // must be synchronized external
     output scl_o,
     input sda_i,  // must be synchronized external
@@ -67,7 +68,6 @@ module I2C_master (
         .rst_n        (rst_n),
         .scl_en       (scl_en),
         .scl_wait     (scl_wait),
-        .set_scl_div  (set_scl_div),
         .scl_div      (scl_div),
         .scl_stretched(scl_stretched),
         .scl_i        (scl_i),

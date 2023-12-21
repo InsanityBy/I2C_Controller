@@ -493,7 +493,7 @@ module I2C_slave (
 
     // bus error, start or stop condition at wrong place
     always @(*) begin
-        bus_err = wr_bus_err && rd_bus_err;
+        bus_err = wr_bus_err || rd_bus_err;
     end
 
     // byte wait to be read or written

@@ -23,6 +23,7 @@
  *     fix: reset signal
  * V1.2 - 2023.12.21
  *     refactor: remove clock divisor
+ *     fix: connection and timing issues
  */
 module I2C_controller (
     input clk,
@@ -191,12 +192,21 @@ module I2C_controller (
     end
 
     // set local address
+    reg [6:0] addr_reg;
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
+            addr_reg <= 7'b100_1001;
+        end
+        else begin
+            addr_reg <= set_local_addr;
+        end
+    end
     always @(posedge clk or negedge rst_sync_n) begin
         if (!rst_sync_n) begin
             local_addr <= 7'b100_1001;
         end
         else if (!enable) begin  // local_addr can ONLY be set when module disabled
-            local_addr <= set_local_addr;
+            local_addr <= addr_reg;
         end
         else begin
             local_addr <= local_addr;
@@ -204,16 +214,25 @@ module I2C_controller (
     end
 
     // set scl divisor
+    reg [7:0] scl_div_reg;
+    always @(posedge clk or negedge rst_sync_n) begin
+        if (!rst_sync_n) begin
+            scl_div_reg <= 7'h01;
+        end
+        else begin
+            scl_div_reg <= set_scl_div;
+        end
+    end
     always @(posedge clk or negedge rst_sync_n) begin
         if (!rst_sync_n) begin
             scl_div <= 8'h01;
         end
         else if (!enable) begin  // scl_div can ONLY be set when module disabled
-            if (set_scl_div == 8'b0) begin
+            if (scl_div_reg == 8'b0) begin
                 scl_div <= 8'h01;
             end
             else begin
-                scl_div <= set_scl_div;
+                scl_div <= scl_div_reg;
             end
         end
         else begin
@@ -318,12 +337,7 @@ module I2C_controller (
 
     // controller mode
     always @(*) begin
-        if (state_current == MASTER) begin
-            is_master = 1'b1;
-        end
-        else begin
-            is_master = 1'b0;
-        end
+        is_master = master_en;
     end
 
 endmodule

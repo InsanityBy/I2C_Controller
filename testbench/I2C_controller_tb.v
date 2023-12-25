@@ -8,6 +8,7 @@ module testbench ();
         $fsdbDumpfile("wave.fsdb");
         $fsdbDumpvars(0);
         #10000000 $fsdbDumpoff;
+        $finish;
     end
 `endif
 `ifdef vcddump
@@ -22,7 +23,7 @@ module testbench ();
     // test parameters
     parameter test_round = 32;
     parameter scl_div = 32;
-    parameter clk_period = 20;
+    parameter clk_period = 40;
     parameter local_addr = 7'b110_1010;
     parameter scl_period = clk_period * scl_div;
 
@@ -86,12 +87,13 @@ module testbench ();
     // generate clock and reset
     initial begin
         clk   = 1'b0;
-        rst_n = 1'b1;
-        #clk_period rst_n = 1'b0;
-        #clk_period rst_n = 1'b1;
         forever #(clk_period / 2) clk = ~clk;
     end
-
+    initial begin
+        rst_n = 1'b1;
+        #clk_period #1 rst_n = 1'b0;
+        #clk_period #1 rst_n = 1'b1;
+    end
     // generate m_scl
     reg     m_scl_en;
     integer scl_cnt;
@@ -199,7 +201,7 @@ module testbench ();
             // address
             m_write_data(1'b1, {addr, 1'b0});
             // check ack
-            @(negedge scl) m_sda = 1'b1;  // release sda
+            @(negedge scl) #1 m_sda = 1'b1;  // release sda
             m_read_data(1'b0, ack);
             if (ack) begin
                 m_write_stop;
@@ -210,7 +212,7 @@ module testbench ();
                     data_written = $random % 256;
                     m_write_data(1'b1, data_written);
                     // check ack
-                    @(negedge scl) m_sda = 1'b1;  // release sda
+                    @(negedge scl) #1 m_sda = 1'b1;  // release sda
                     m_read_data(1'b0, ack);
                     if (ack) begin
                         m_write_stop;
@@ -240,7 +242,7 @@ module testbench ();
             // address
             m_write_data(1'b1, {addr, 1'b1});
             // check ack
-            @(negedge scl) m_sda = 1'b1;  // release sda
+            @(negedge scl) #1 m_sda = 1'b1;  // release sda
             m_read_data(1'b0, ack);
             if (ack) begin
                 m_write_stop;
@@ -268,10 +270,10 @@ module testbench ();
     reg sda_reg, get_start, get_stop;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            sda_reg <= 1'b1;
+            sda_reg <= #1 1'b1;
         end
         else begin
-            sda_reg <= sda;
+            sda_reg <= #1 sda;
         end
     end
     always @(*) begin
@@ -358,7 +360,7 @@ module testbench ();
                     data_write = $random % 256;
                     s_write_data(data_write, ack);
                     if (ack) begin
-                        s_sda = 1'b1;
+                        #1 s_sda = 1'b1;
                         disable s_correct_addr;
                     end
                 end
@@ -395,7 +397,6 @@ module testbench ();
             wait (wr_reg_empty);
             @(posedge clk) #1 byte_wr_i = {addr, 1'b0};
             wr_rdy = 1'b1;
-            @(posedge clk) wr_rdy = 1'b1;
             @(posedge clk) #1 wr_rdy = 1'b0;
             // data
             wait (get_nack || addr_match);
@@ -410,8 +411,7 @@ module testbench ();
                     wait (wr_reg_empty);
                     @(posedge clk) #1 byte_wr_i = data_written;
                     wr_rdy = 1'b1;
-                    @(posedge clk) wr_rdy = 1'b1;
-                    @(posedge clk) #1 wr_rdy = 1'b0;
+                    @(posedge clk) #5 wr_rdy = 1'b0;
                 end
                 // stop
                 wait (byte_wait);
@@ -444,7 +444,6 @@ module testbench ();
             wait (wr_reg_empty);
             @(posedge clk) #1 byte_wr_i = {addr, 1'b1};
             wr_rdy = 1'b1;
-            @(posedge clk) wr_rdy = 1'b1;
             @(posedge clk) #1 wr_rdy = 1'b0;
             // data
             wait (get_nack || addr_match);
@@ -458,9 +457,8 @@ module testbench ();
                     wait (rd_reg_full);
                     @(posedge clk) #1 data_read = byte_rd_o;
                     rd_clr = 1'b1;
-                    @(posedge clk) rd_clr = 1'b1;
-                    @(posedge clk) #1 rd_clr = 1'b0;
-                    if (i == (n_byte - 1)) begin
+                    @(posedge clk) #5 rd_clr = 1'b0;
+                    if (i == (n_byte - 2)) begin
                         @(posedge clk) #1 stop_trans = 1'b1;
                     end
                 end
@@ -505,7 +503,7 @@ module testbench ();
             @(negedge scl) begin
                 if (i == (byte_pos * 9 + bit_pos)) begin
                     #1 e_sda = 1'b0;
-                    @(posedge scl) #(clk_period * scl_div / 4) e_sda = 1'b1;
+                    @(posedge scl) #(scl_period / 4 + 1) e_sda = 1'b1;
                     disable insert_bus_err_0;
                 end
                 else begin
@@ -526,7 +524,7 @@ module testbench ();
             @(negedge scl) begin
                 if (i == (byte_pos * 9 + bit_pos)) begin
                     #1 e_sda = 1'b1;
-                    @(posedge scl) #(clk_period * scl_div / 4) e_sda = 1'b0;
+                    @(posedge scl) #(scl_period / 4 + 1) e_sda = 1'b0;
                     disable insert_bus_err_1;
                 end
                 else begin
@@ -541,37 +539,37 @@ module testbench ();
     reg [7:0] slave_read, slave_write;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rd_clr <= 1'b0;
-            slave_read <= 8'b0;
+            rd_clr <= #1 1'b0;
+            slave_read <= #1 8'b0;
         end
         else if (!is_master) begin
             if ((~trans_dir) && rd_reg_full) begin
-                rd_clr <= 1'b1;
-                slave_read <= byte_rd_o;
+                rd_clr <= #1 1'b1;
+                slave_read <= #1 byte_rd_o;
             end
             else begin
-                rd_clr <= 1'b0;
-                slave_read <= slave_read;
+                rd_clr <= #1 1'b0;
+                slave_read <= #1 slave_read;
             end
         end
     end
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            wr_rdy <= 1'b0;
-            slave_write <= ($random % 256);
-            byte_wr_i <= 8'b0;
+            wr_rdy <= #1 1'b0;
+            slave_write <= #1 ($random % 256);
+            byte_wr_i <= #1 8'b0;
         end
         else if (!is_master) begin
             if (trans_dir && wr_reg_empty) begin
-                wr_rdy <= 1'b1;
-                slave_write <= ($random % 256);
-                byte_wr_i <= slave_write;
+                wr_rdy <= #1 1'b1;
+                slave_write <= #1 ($random % 256);
+                byte_wr_i <= #1 slave_write;
             end
             else begin
-                wr_rdy <= 1'b0;
-                slave_write <= slave_write;
-                byte_wr_i <= byte_wr_i;
+                wr_rdy <= #1 1'b0;
+                slave_write <= #1 slave_write;
+                byte_wr_i <= #1 byte_wr_i;
             end
         end
     end
@@ -580,13 +578,13 @@ module testbench ();
     integer test_cnt;
     integer err_cnt;
     initial begin
-        test_cnt = 0;
-        err_cnt = 0;
         enable = 0;
+        start_trans = 1'b0;
+        stop_trans = 1'b0;
         s_sda = 1'b1;
         m_sda = 1'b1;
         e_sda = 1'b1;
-        #(clk_period * 5) enable = 1;
+        #(clk_period * 8 + 1) enable = 1;
 
         $display("\n******************** module test started *******************\n");
         // wrong address
@@ -638,14 +636,14 @@ module testbench ();
             s_wrong_addr;
             s_get_stop;
         join
-        #(clk_period * 1000);
+        #(scl_period + 1);
         // write to slave
         fork
             write_to_slave(7'b010_0101, 4);
             s_correct_addr;
             s_get_stop;
         join
-        #(clk_period * 1000);
+        #(scl_period + 1);
         // // write with bus error
         // fork
         //     write_to_slave(7'b010_0101, 4);
@@ -665,7 +663,7 @@ module testbench ();
             s_correct_addr;
             s_get_stop;
         join
-        #(clk_period * 1000);
+        #(scl_period + 1);
         // // read with bus error
         // fork
         //     read_from_slave(7'b010_0101, 4);
@@ -682,11 +680,11 @@ module testbench ();
         // write to slave, lost arbitration when addressing
         fork
             write_to_slave(7'b010_0101, 4);
-            // insert_wr_err(3'd0, 3'd4);
+            insert_wr_err(3'd0, 3'd4);
             s_correct_addr;
             s_get_stop;
         join
-        #(clk_period * 1000);
+        #(scl_period + 1);
         // write to slave, lost arbitration after addressing
         fork
             write_to_slave(7'b010_0101, 4);
@@ -694,15 +692,9 @@ module testbench ();
             s_correct_addr;
             s_get_stop;
         join
-
+        #(scl_period + 1);
         $display("------------------------------------------------------------");
         // result
-        if (err_cnt == 0) begin
-            $display("result: passed with 0 error");
-        end
-        else begin
-            $display("result: failed with %02d errors in tests", err_cnt);
-        end
         $display("\n******************* module test finished *******************\n");
         $finish;
     end
